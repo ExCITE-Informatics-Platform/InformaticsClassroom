@@ -1,0 +1,52 @@
+# SECURITY: Environment variables with secrets
+.env
+.env.local
+.env.*.local
+
+# Flask session data
+flask_session/
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+informatics_classroom/.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+FINAL_TEST_EXECUTION.txt
+
+# Claude Code documentation (project-specific, not for version control)
+CLAUDE.md
+**/CLAUDE.md
+claudedocs/
+.claude/
+.serena/
+migrations/cosmos_export
+migrations/cosmos_export/*
