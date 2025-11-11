@@ -120,11 +120,11 @@ COSMOS_DATABASE_PROD="bids-class"
 ---
 
 ## What's Working
-✅ Flask backend
-✅ PostgreSQL database
-✅ Database queries
-✅ API endpoints
-✅ Phase 3 features (TokenGenerator, AssignmentAnalysis, ExerciseReview)
+- ✅ Flask backend
+- ✅ PostgreSQL database
+- ✅ Database queries
+- ✅ API endpoints
+- ✅ Phase 3 features (TokenGenerator, AssignmentAnalysis, ExerciseReview)
 
 ## Known Issues
 ❌ React frontend build (TypeScript errors in old files)
