@@ -358,7 +358,7 @@ For issues, questions, or contributions:
 
 ## Acknowledgments
 
-Built for biomedical informatics education at [Institution Name].
+Built for biomedical informatics education at Johns Hopkins University.
 
 ---
 
