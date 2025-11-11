@@ -352,10 +352,6 @@ For issues, questions, or contributions:
 - Open an issue on GitHub
 - Contact the development team
 
-## License
-
-[Add license information]
-
 ## Acknowledgments
 
 Built for biomedical informatics education at Johns Hopkins University.
