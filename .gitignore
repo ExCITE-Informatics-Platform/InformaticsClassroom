@@ -53,3 +53,5 @@ migrations/cosmos_export/*
 # Cosmos DB backups
 cosmos_backup_*/
 scripts/backup_cosmos_full.py
+migrations/normalize_answer_types.py
+.gitignore

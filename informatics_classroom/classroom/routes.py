@@ -99,6 +99,53 @@ def get_user_answers_for_quiz(class_val, module_val, team):
     answers = db.query_raw('answer', query, parameters)
     return answers
 
+
+def get_user_answers_for_course(class_val, team):
+    """
+    Fetch ALL answers for a team in a course, grouped by module.
+    This is a batch version of get_user_answers_for_quiz to avoid N+1 queries.
+
+    Args:
+        class_val: The course/class name
+        team: The team/user identifier
+
+    Returns:
+        dict: {module: [answers]} where each answer has question, answer, correct fields
+
+    Performance: Uses idx_answer_course_team index for fast lookups.
+    """
+    db = get_database_adapter()
+    # Optimized query - no ORDER BY needed for batch grouping
+    # datetime IS NOT NULL ensures we only get valid submissions
+    query = """
+        SELECT
+            data->>'module' as module,
+            data->>'question' as question,
+            data->>'answer' as answer,
+            CASE WHEN data->>'correct' IN ('1', 'true', 'True') THEN true ELSE false END as correct
+        FROM answer
+        WHERE LOWER(data->>'course') = LOWER($1)
+          AND data->>'team' = $2
+          AND data->>'datetime' IS NOT NULL
+    """
+    parameters = [
+        {"name": "$1", "value": class_val},
+        {"name": "$2", "value": team}
+    ]
+
+    answers = db.query_raw('answer', query, parameters)
+
+    # Group by module for O(1) lookup
+    by_module = {}
+    for ans in answers:
+        module = str(ans.get('module'))
+        if module not in by_module:
+            by_module[module] = []
+        by_module[module].append(ans)
+
+    return by_module
+
+
 def get_user_role(user_id = None):
     """
     DEPRECATED: Use auth.class_auth.get_user_class_role() for class-specific roles.
@@ -826,7 +873,7 @@ def process_answers(token, answers):
             'open': open_answers.get(str(question_num)),
             'answer': answer_num,
             'datetime': str(dt.datetime.now(dt.timezone.utc)),
-            'correct': int(is_correct),
+            'correct': is_correct,  # Boolean - standardized format
         })
 
     # Batch log attempts
@@ -889,7 +936,7 @@ def process_answers_session(class_val, module_val, team, answers):
             'open': open_answers.get(str(question_num)),
             'answer': answer_num,
             'datetime': str(dt.datetime.now(dt.timezone.utc)),
-            'correct': int(is_correct),
+            'correct': is_correct,  # Boolean - standardized format
         })
 
     # Batch log attempts

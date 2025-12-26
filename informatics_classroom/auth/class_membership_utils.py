@@ -79,10 +79,8 @@ def normalize_class_memberships(user: Dict) -> Dict:
         global_role = user.get('role', '').lower()
         if global_role in ['admin', 'instructor']:
             inferred_role = 'instructor'
-        elif global_role == 'ta':
+        elif global_role in ['ta', 'grader']:  # grader upgraded to ta
             inferred_role = 'ta'
-        elif global_role == 'grader':
-            inferred_role = 'grader'
         else:
             inferred_role = 'student'
 
@@ -139,7 +137,7 @@ def validate_class_membership(membership: Any) -> Tuple[bool, Optional[str]]:
     if role is not None:
         if not isinstance(role, str):
             return False, "Membership 'role' must be a string"
-        valid_roles = ['admin', 'instructor', 'ta', 'grader', 'student', 'user']
+        valid_roles = ['admin', 'instructor', 'ta', 'student', 'user']
         if role.lower() not in valid_roles:
             return False, f"Invalid role '{role}'. Must be one of: {valid_roles}"
 

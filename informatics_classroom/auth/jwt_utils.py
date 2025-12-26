@@ -222,10 +222,8 @@ def require_jwt_token(f):
                     db_role = db_user.get('role', '').lower()
                     if db_role in ['admin', 'instructor']:
                         inferred_role = 'instructor'
-                    elif db_role == 'ta':
+                    elif db_role in ['ta', 'grader']:  # grader upgraded to ta
                         inferred_role = 'ta'
-                    elif db_role == 'grader':
-                        inferred_role = 'grader'
                     else:
                         inferred_role = 'student'
 
@@ -302,10 +300,9 @@ def require_role(required_roles):
 
             # Check role hierarchy - if user has a higher role that inherits the required role
             ROLE_HIERARCHY = {
-                'admin': ['instructor', 'ta', 'grader', 'student'],
-                'instructor': ['ta', 'grader', 'student'],
+                'admin': ['instructor', 'ta', 'student'],
+                'instructor': ['ta', 'student'],
                 'ta': ['student'],
-                'grader': ['student'],
                 'student': [],
             }
 

@@ -14,7 +14,8 @@ from informatics_classroom.auth.class_auth import (
     remove_class_role,
     update_class_role,
     get_class_members,
-    validate_role
+    validate_role,
+    sanitize_user_id
 )
 from informatics_classroom.classroom.routes import (
     get_classes_for_user,
@@ -63,6 +64,10 @@ def api_get_student_progress():
     Get student progress for a specific course.
     Query params: course (required)
     Returns: Module progress with question status
+
+    Optimized: Uses batch query instead of N+1 pattern.
+    - 1 query for quizzes
+    - 1 query for ALL answers (grouped by module)
     """
     try:
         course = request.args.get('course')
@@ -83,18 +88,21 @@ def api_get_student_progress():
 
         team = user_data[0].get('team', user_id)
 
-        # Get all quizzes for the course
+        # QUERY 1: Get all quizzes for the course
         db = get_database_adapter()
         quizzes = db.query('quiz', filters={'class': course})
 
-        # Build progress data
+        # QUERY 2: Get ALL answers for this course in ONE query (grouped by module)
+        answers_by_module = get_user_answers_for_course(course, team)
+
+        # Build progress data using in-memory lookup (no more DB queries in loop)
         progress_data = []
         for quiz in quizzes:
-            module = quiz.get('module')
+            module = str(quiz.get('module'))
             questions = quiz.get('questions', [])
 
-            # Get user answers for this module
-            answers = get_user_answers_for_quiz(course, module, team)
+            # O(1) lookup instead of DB query
+            answers = answers_by_module.get(module, [])
 
             # Build question status
             question_status = []
@@ -114,7 +122,7 @@ def api_get_student_progress():
                 })
 
             progress_data.append({
-                'module': module,
+                'module': quiz.get('module'),
                 'module_name': quiz.get('module_name', f'Module {module}'),
                 'questions': question_status,
                 'total_questions': len(questions),
@@ -361,19 +369,26 @@ def api_submit_answer():
             print(f"DEBUG - User {user_id} not found, creating on answer submission", file=sys.stderr)
             sys.stderr.flush()
 
-            # Create user with all three class membership formats in sync
+            # Create user with standardized format (class_memberships list only)
             db_user = {
                 'id': user_id,
                 'email': request.jwt_user.get('email', f"{user_id}@jhu.edu"),
                 'name': request.jwt_user.get('display_name', user_id),
                 'roles': ['student'],  # Default to student role
                 'class_memberships': [
-                    {'class_id': course, 'role': 'student'}  # Auto-enroll in this course
+                    {
+                        'class_id': course,
+                        'role': 'student',
+                        'assigned_at': dt.datetime.utcnow().isoformat(),
+                        'assigned_by': 'auto-enrollment'
+                    }
                 ],
-                'classRoles': {course: 'student'},  # Sync with class_memberships
-                'accessible_classes': [course],  # Sync with class_memberships
+                'classRoles': {},  # Legacy - kept for read compatibility
+                'accessible_classes': [],  # Legacy - kept for read compatibility
                 'created_at': dt.datetime.utcnow().isoformat(),
-                'team': user_id
+                'team': user_id,
+                'isActive': True,
+                'permissions': []
             }
             db.upsert('users', db_user)
             print(f"DEBUG - Created user {user_id} and enrolled in {course}", file=sys.stderr)
@@ -391,32 +406,21 @@ def api_submit_answer():
             )
 
             if not already_enrolled:
-                # Auto-enroll as student - update all three formats
+                # Auto-enroll as student - update class_memberships only
+                # (Legacy formats classRoles/accessible_classes kept for read compatibility but not written)
                 import sys
+                import datetime as dt
                 print(f"DEBUG - Auto-enrolling {user_id} in {course} as student", file=sys.stderr)
                 sys.stderr.flush()
 
-                # Update class_memberships list
+                # Update class_memberships list with full metadata
                 class_memberships.append({
                     'class_id': course,
-                    'role': 'student'
+                    'role': 'student',
+                    'assigned_at': dt.datetime.utcnow().isoformat(),
+                    'assigned_by': 'auto-enrollment'
                 })
                 db_user['class_memberships'] = class_memberships
-
-                # Update classRoles dict
-                class_roles = db_user.get('classRoles', {})
-                if not isinstance(class_roles, dict):
-                    class_roles = {}
-                class_roles[course] = 'student'
-                db_user['classRoles'] = class_roles
-
-                # Update accessible_classes list
-                accessible_classes = db_user.get('accessible_classes', [])
-                if not isinstance(accessible_classes, list):
-                    accessible_classes = []
-                if course not in accessible_classes:
-                    accessible_classes.append(course)
-                db_user['accessible_classes'] = accessible_classes
 
                 db.upsert('users', db_user)
 
@@ -512,10 +516,26 @@ def api_get_instructor_classes():
         # Get all quizzes to extract class information
         all_quizzes = db.query('quiz', filters={})
 
-        # Get unique classes
+        # Get unique classes from quizzes
+        quiz_class_names = set(q.get('class') for q in all_quizzes if q.get('class'))
+
+        # Get classes from user memberships (handles newly created classes with no quizzes)
         if is_admin:
-            class_names = list(set(q.get('class') for q in all_quizzes if q.get('class')))
+            # Admins: Include ALL classes from quizzes + classes they're explicitly assigned to
+            # Also fetch fresh from database in case of recent class creation
+            db_user = db.get('users', user_id)
+            membership_classes = set()
+            if db_user:
+                class_memberships = db_user.get('class_memberships', [])
+                if isinstance(class_memberships, list):
+                    membership_classes = set(
+                        m.get('class_id') for m in class_memberships
+                        if isinstance(m, dict) and m.get('class_id')
+                    )
+            # Merge: quizzes + memberships
+            class_names = list(quiz_class_names | membership_classes)
         else:
+            # Non-admins: Only their managed classes (fetches fresh from DB)
             class_names = get_user_managed_classes(user, min_role='ta')
 
         # Build class metadata
@@ -525,11 +545,11 @@ def api_get_instructor_classes():
             class_quizzes = [q for q in all_quizzes if q.get('class') == class_name]
             quiz_count = len(class_quizzes)
 
-            # Get class owner (first quiz owner)
+            # Get class owner and created_at
             owner = None
             created_at = None
             if class_quizzes:
-                # Sort by created_at to find the original quiz
+                # Primary: from first quiz
                 sorted_quizzes = sorted(
                     [q for q in class_quizzes if q.get('created_at')],
                     key=lambda x: x.get('created_at', '')
@@ -537,6 +557,17 @@ def api_get_instructor_classes():
                 if sorted_quizzes:
                     owner = sorted_quizzes[0].get('owner')
                     created_at = sorted_quizzes[0].get('created_at')
+
+            # Fallback for empty classes: get first instructor from members
+            if not owner:
+                from informatics_classroom.auth.class_auth import get_class_members
+                members_for_owner = get_class_members(class_name)
+                instructors = [m for m in members_for_owner if m.get('role') == 'instructor']
+                if instructors:
+                    # Sort by assigned_at to find the original creator
+                    instructors.sort(key=lambda x: x.get('assigned_at') or '')
+                    owner = instructors[0].get('user_id')
+                    created_at = instructors[0].get('assigned_at')
 
             # Get user's role for this class
             role = get_user_class_role(user, class_name) if not is_admin else 'admin'
@@ -576,11 +607,11 @@ def api_get_instructor_classes():
 
 @classroom_bp.route('/api/classes', methods=['POST'])
 @require_jwt_token
-@require_role(['admin', 'instructor'])
+@require_role(['admin', 'instructor', 'ta'])
 def api_create_class():
     """
     Create a new class.
-    Only instructors and admins can create classes.
+    Instructors, TAs, and admins can create classes.
     Returns: { success, class }
     """
     try:
@@ -635,9 +666,9 @@ def api_create_class():
 @require_jwt_token
 def api_delete_class(class_id):
     """
-    Delete a class and all its associated data (quizzes, answers, memberships).
+    Delete a class and all its associated data (quizzes, memberships).
     Only class owners, instructors, and admins can delete.
-    Returns: { success }
+    Returns: { success, deleted_quizzes, removed_members }
     """
     try:
         user = request.jwt_user
@@ -646,18 +677,24 @@ def api_delete_class(class_id):
 
         db = get_database_adapter()
 
-        # Get all quizzes for this class to determine owner
+        # Get all quizzes for this class
         all_quizzes = db.query('quiz', filters={})
         class_quizzes = [q for q in all_quizzes if q.get('class') == class_id]
 
-        if not class_quizzes:
+        # Get class members to verify class exists
+        members = get_class_members(class_id)
+
+        # Class must exist either via quizzes OR memberships
+        if not class_quizzes and not members:
             return jsonify({
                 'success': False,
-                'error': 'Class not found or has no quizzes'
+                'error': 'Class not found'
             }), 404
 
         # Check permissions
         user_role = get_user_class_role(user, class_id)
+
+        # Determine class owner from quizzes or first instructor
         class_owner = None
         if class_quizzes:
             sorted_quizzes = sorted(
@@ -666,6 +703,12 @@ def api_delete_class(class_id):
             )
             if sorted_quizzes:
                 class_owner = sorted_quizzes[0].get('owner')
+        elif members:
+            # Fallback: first instructor is considered owner
+            instructors = [m for m in members if m.get('role') == 'instructor']
+            if instructors:
+                instructors.sort(key=lambda x: x.get('assigned_at') or '')
+                class_owner = instructors[0].get('user_id')
 
         can_delete = is_admin or (class_owner and class_owner == user_id) or user_role == 'instructor'
 
@@ -676,20 +719,32 @@ def api_delete_class(class_id):
             }), 403
 
         # Delete all quizzes for this class
+        deleted_quiz_count = 0
         for quiz in class_quizzes:
             quiz_id = quiz.get('id')
             if quiz_id:
                 db.delete('quiz', quiz_id)
+                deleted_quiz_count += 1
 
-        # Note: We don't delete answer records to preserve historical data
-        # But we could add a flag or separate them if needed
+        # Remove class membership from all users
+        removed_member_count = 0
+        for member in members:
+            member_user_id = member.get('user_id')
+            if member_user_id:
+                try:
+                    remove_class_role(member_user_id, class_id)
+                    removed_member_count += 1
+                except Exception as e:
+                    # Log but don't fail the whole operation
+                    import sys
+                    print(f"Warning: Failed to remove {member_user_id} from {class_id}: {e}", file=sys.stderr)
 
-        # Remove class membership records
-        # This would require direct database access to the user records
-        # For now, we'll rely on the quiz deletion to effectively remove the class
+        # Note: Answer records are preserved for historical data
 
         return jsonify({
-            'success': True
+            'success': True,
+            'deleted_quizzes': deleted_quiz_count,
+            'removed_members': removed_member_count
         }), 200
     except Exception as e:
         return jsonify({
@@ -1009,7 +1064,7 @@ def api_get_class_grades(class_id):
     """
     Get grade matrix for all students and quizzes in a class.
     Returns pivot table data with students as rows and quizzes as columns.
-    Requires view_analytics permission (instructor, TA, or grader).
+    Requires view_analytics permission (instructor or TA).
     Returns: {
         success,
         students: [student_ids],
@@ -1254,7 +1309,7 @@ def api_generate_token():
 def api_analyze_assignment():
     """
     Analyze assignment performance for a class/module with optional year filter.
-    Requires view_analytics permission for the class (instructor, TA, or grader).
+    Requires view_analytics permission for the class (instructor or TA).
     """
     try:
         data = request.get_json()
@@ -1577,13 +1632,21 @@ def api_add_class_member(class_id):
                 'error': 'No data provided'
             }), 400
 
-        user_id = data.get('user_id')
+        raw_user_id = data.get('user_id')
         role = data.get('role')
 
-        if not user_id:
+        if not raw_user_id:
             return jsonify({
                 'success': False,
                 'error': 'user_id is required'
+            }), 400
+
+        # Sanitize user_id: strip @domain patterns, lowercase, trim whitespace
+        user_id = sanitize_user_id(raw_user_id)
+        if not user_id:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid user_id after sanitization'
             }), 400
 
         if not role:
@@ -1611,22 +1674,192 @@ def api_add_class_member(class_id):
         # Get current user for audit trail
         assigned_by = current_user.get('user_id') or current_user.get('email')
 
+        # Prevent self-elevation: users cannot add themselves with a higher role
+        if user_id == sanitize_user_id(assigned_by or ''):
+            # Get user's current role in this class (if any)
+            current_role = get_user_class_role(current_user, class_id)
+            role_hierarchy = {'instructor': 3, 'ta': 2, 'student': 1}
+            current_level = role_hierarchy.get(current_role.lower() if current_role else '', 0)
+            requested_level = role_hierarchy.get(role.lower(), 0)
+
+            if requested_level > current_level:
+                return jsonify({
+                    'success': False,
+                    'error': 'Cannot elevate your own role. Have another administrator assign you a higher role.'
+                }), 403
+
         # Assign the role
-        result = assign_class_role(user_id, class_id, role, assigned_by=assigned_by)
+        # For students, allow creating placeholder users if they don't exist
+        create_if_missing = role.lower() == 'student'
+        result = assign_class_role(user_id, class_id, role, assigned_by=assigned_by,
+                                   create_if_missing=create_if_missing)
 
         if result.get('success'):
-            return jsonify({
+            response_data = {
                 'success': True,
                 'message': f'User {user_id} added to class {class_id} as {role}',
                 'user_id': user_id,
                 'class_id': class_id,
                 'role': role
-            }), 200
+            }
+            # Indicate if user was newly created
+            if result.get('user_created'):
+                response_data['user_created'] = True
+                response_data['message'] = f'User {user_id} created and added to class {class_id} as {role}'
+            return jsonify(response_data), 200
         else:
             return jsonify({
                 'success': False,
                 'error': result.get('error', 'Failed to assign role')
             }), 400
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@classroom_bp.route('/api/classes/<class_id>/import-students', methods=['POST'])
+@require_jwt_token
+def api_import_students(class_id):
+    """
+    Bulk import students to a class from a CSV file or JSON array.
+
+    Requires manage_members permission for the class.
+    Only imports as students (not instructors or TAs).
+    Creates placeholder users for IDs that don't exist in the database.
+
+    Request body (JSON):
+        user_ids: List of user IDs to import
+        Example: {"user_ids": ["jsmith1", "jdoe2", "alee3@jhu.edu"]}
+
+    Or multipart form with CSV file:
+        file: CSV file with user IDs (one per line, or first column)
+
+    Returns:
+        JSON with import results:
+        {
+            success: bool,
+            imported: int,
+            created: int,
+            skipped: int,
+            errors: [{user_id, error}],
+            results: [{user_id, status, created}]
+        }
+    """
+    try:
+        # Check permissions
+        current_user = request.jwt_user
+        from informatics_classroom.auth.class_auth import user_has_class_permission
+        if not user_has_class_permission(current_user, class_id, 'manage_members'):
+            return jsonify({
+                'success': False,
+                'error': 'Insufficient permissions to manage members for this class'
+            }), 403
+
+        assigned_by = current_user.get('user_id') or current_user.get('email')
+
+        # Get user IDs from request
+        user_ids = []
+
+        # Check for JSON body first
+        if request.is_json:
+            data = request.get_json()
+            user_ids = data.get('user_ids', [])
+            if not isinstance(user_ids, list):
+                return jsonify({
+                    'success': False,
+                    'error': 'user_ids must be a list'
+                }), 400
+        # Check for file upload
+        elif 'file' in request.files:
+            file = request.files['file']
+            if file.filename == '':
+                return jsonify({
+                    'success': False,
+                    'error': 'No file selected'
+                }), 400
+
+            # Read CSV file
+            import csv
+            import io
+            try:
+                content = file.read().decode('utf-8')
+                reader = csv.reader(io.StringIO(content))
+                for row in reader:
+                    if row:  # Skip empty rows
+                        # Take first column (or only value if single column)
+                        user_id = row[0].strip()
+                        if user_id and not user_id.lower().startswith('user'):  # Skip header rows
+                            user_ids.append(user_id)
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Failed to parse CSV file: {str(e)}'
+                }), 400
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No user_ids provided. Send JSON with user_ids array or upload a CSV file.'
+            }), 400
+
+        if not user_ids:
+            return jsonify({
+                'success': False,
+                'error': 'No user IDs to import'
+            }), 400
+
+        # Process each user ID
+        results = []
+        imported_count = 0
+        created_count = 0
+        skipped_count = 0
+        errors = []
+
+        for raw_id in user_ids:
+            # Sanitize user ID
+            user_id = sanitize_user_id(raw_id)
+            if not user_id:
+                errors.append({'user_id': raw_id, 'error': 'Invalid user ID after sanitization'})
+                skipped_count += 1
+                continue
+
+            try:
+                # Import as student with create_if_missing=True
+                result = assign_class_role(
+                    user_id, class_id, 'student',
+                    assigned_by=assigned_by,
+                    create_if_missing=True
+                )
+
+                if result.get('success'):
+                    imported_count += 1
+                    if result.get('user_created'):
+                        created_count += 1
+                    results.append({
+                        'user_id': user_id,
+                        'status': 'imported',
+                        'created': result.get('user_created', False)
+                    })
+                else:
+                    errors.append({'user_id': user_id, 'error': result.get('error', 'Unknown error')})
+                    skipped_count += 1
+
+            except Exception as e:
+                errors.append({'user_id': user_id, 'error': str(e)})
+                skipped_count += 1
+
+        return jsonify({
+            'success': True,
+            'class_id': class_id,
+            'imported': imported_count,
+            'created': created_count,
+            'skipped': skipped_count,
+            'total_processed': len(user_ids),
+            'errors': errors,
+            'results': results
+        }), 200
 
     except Exception as e:
         return jsonify({

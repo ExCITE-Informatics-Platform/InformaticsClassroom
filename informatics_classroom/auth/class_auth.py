@@ -9,6 +9,38 @@ they have appropriate permissions.
 from functools import wraps
 from flask import request, jsonify
 from typing import Optional, List, Dict, Any, Union
+import re
+
+
+def sanitize_user_id(user_id: str) -> str:
+    """
+    Sanitize a user ID by stripping email domain patterns and invalid characters.
+
+    Examples:
+        'jsmith1@jhu.edu' -> 'jsmith1'
+        'jsmith1@jh.edu' -> 'jsmith1'
+        'JSMITH1' -> 'jsmith1'
+        '  jsmith1  ' -> 'jsmith1'
+
+    Args:
+        user_id: Raw user ID string
+
+    Returns:
+        Cleaned user ID (lowercase, no domain, trimmed)
+    """
+    if not user_id:
+        return ''
+
+    # Strip whitespace
+    cleaned = user_id.strip()
+
+    # Remove @domain.edu patterns (case-insensitive)
+    cleaned = re.sub(r'@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', '', cleaned)
+
+    # Convert to lowercase for consistency
+    cleaned = cleaned.lower()
+
+    return cleaned
 
 
 # Permission definitions for each class-level role
@@ -45,7 +77,7 @@ def get_user_class_role(user: Dict[str, Any], class_id: str) -> Optional[str]:
         class_id: Class identifier
 
     Returns:
-        Role string ('instructor', 'ta', 'grader', 'student') or None if no access
+        Role string ('instructor', 'ta', 'student') or None if no access
     """
     # Check if user is global admin
     if 'admin' in user.get('roles', []):
@@ -113,7 +145,7 @@ def get_role_permissions(role: str) -> List[str]:
     Get list of permissions for a given role.
 
     Args:
-        role: Role name (instructor, ta, grader, student)
+        role: Role name (instructor, ta, student)
 
     Returns:
         List of permission strings
@@ -151,7 +183,7 @@ def get_user_managed_classes(user: Dict[str, Any], min_role: str = 'student') ->
     """
     Get all classes where user has at least the specified role level.
 
-    Role hierarchy: instructor > ta > grader > student
+    Role hierarchy: instructor > ta > student
 
     Args:
         user: User object from request.jwt_user
@@ -175,18 +207,22 @@ def get_user_managed_classes(user: Dict[str, Any], min_role: str = 'student') ->
         # or indicate they have access to all (handled by calling code)
         pass
 
-    # Check class_memberships - handle both dict and list formats
-    class_memberships = user.get('class_memberships', [])
-
-    # If class_memberships not in JWT user object, fetch from database
-    if not class_memberships or (isinstance(class_memberships, (dict, list)) and len(class_memberships) == 0):
-        user_id = user.get('user_id')
-        if user_id:
-            from informatics_classroom.database.factory import get_database_adapter
-            db = get_database_adapter()
-            db_user = db.get('users', user_id)
-            if db_user:
-                class_memberships = db_user.get('class_memberships', [])
+    # ALWAYS fetch fresh from database to avoid stale JWT data
+    # This is critical because class memberships can change after JWT is issued
+    # (e.g., user creates a new class, gets added to a class by admin)
+    user_id = user.get('user_id')
+    if user_id:
+        from informatics_classroom.database.factory import get_database_adapter
+        db = get_database_adapter()
+        db_user = db.get('users', user_id)
+        if db_user:
+            class_memberships = db_user.get('class_memberships', [])
+        else:
+            # Fallback to JWT data if user not in database
+            class_memberships = user.get('class_memberships', [])
+    else:
+        # No user_id, use JWT data
+        class_memberships = user.get('class_memberships', [])
 
     # Handle list format [{"class_id": "fhir22", "role": "instructor"}]
     if isinstance(class_memberships, list):
@@ -389,24 +425,27 @@ def require_class_permission(permission: str, class_from: str = 'body.class'):
     return decorator
 
 
-def assign_class_role(user_id: str, class_id: str, role: str, assigned_by: str = None) -> Dict[str, Any]:
+def assign_class_role(user_id: str, class_id: str, role: str, assigned_by: str = None,
+                      create_if_missing: bool = False) -> Dict[str, Any]:
     """
     Assign a user to a class with a specific role.
 
     Args:
         user_id: User identifier
         class_id: Class identifier
-        role: Role to assign (instructor, ta, grader, student)
+        role: Role to assign (instructor, ta, student)
         assigned_by: User ID of person making the assignment (for audit)
+        create_if_missing: If True and role is 'student', create a placeholder user
+                          if they don't exist. Does not apply to instructor/ta roles.
 
     Returns:
         Result dictionary with success status
 
     Raises:
-        ValueError: If role is invalid
+        ValueError: If role is invalid or user not found (when create_if_missing=False)
     """
     # Validate role
-    valid_roles = ['instructor', 'ta', 'grader', 'student']
+    valid_roles = ['instructor', 'ta', 'student']
     if role.lower() not in valid_roles:
         raise ValueError(f'Invalid role: {role}. Must be one of {valid_roles}')
 
@@ -417,8 +456,32 @@ def assign_class_role(user_id: str, class_id: str, role: str, assigned_by: str =
 
     # Get user
     user = db.get('users', user_id)
+    user_created = False
+
     if not user:
-        raise ValueError(f'User {user_id} not found')
+        # Only allow creating placeholder users for students
+        if create_if_missing and role.lower() == 'student':
+            # Create placeholder user - will be updated on first SSO login
+            user = {
+                'id': user_id,
+                'email': f"{user_id}@jhu.edu",  # Placeholder, updated on SSO
+                'name': user_id,                 # Placeholder, updated on SSO
+                'roles': ['student'],
+                'class_memberships': [],
+                'classRoles': {},                # Legacy - for read compatibility
+                'accessible_classes': [],        # Legacy - for read compatibility
+                'isActive': True,
+                'permissions': [],
+                'created_at': datetime.datetime.utcnow().isoformat(),
+                'created_by': assigned_by or 'pre-enrollment',
+                'pending_sso_verification': True  # Flag indicating incomplete profile
+            }
+            db.upsert('users', user)
+            user_created = True
+        else:
+            if role.lower() != 'student':
+                raise ValueError(f'User {user_id} not found. Only students can be pre-enrolled.')
+            raise ValueError(f'User {user_id} not found')
 
     # Initialize class_memberships as a list if needed
     if 'class_memberships' not in user:
@@ -452,16 +515,8 @@ def assign_class_role(user_id: str, class_id: str, role: str, assigned_by: str =
             'assigned_by': assigned_by
         })
 
-    # Update classRoles for backward compatibility
-    if 'classRoles' not in user:
-        user['classRoles'] = {}
-    user['classRoles'][class_id] = role.lower()
-
-    # Update accessible_classes for backward compatibility
-    if 'accessible_classes' not in user:
-        user['accessible_classes'] = []
-    if class_id not in user['accessible_classes']:
-        user['accessible_classes'].append(class_id)
+    # Note: Legacy formats (classRoles, accessible_classes) are no longer written to.
+    # They are kept for read compatibility only.
 
     # Save user
     db.upsert('users', user)
@@ -470,7 +525,8 @@ def assign_class_role(user_id: str, class_id: str, role: str, assigned_by: str =
         'success': True,
         'user_id': user_id,
         'class_id': class_id,
-        'role': role.lower()
+        'role': role.lower(),
+        'user_created': user_created
     }
 
 
@@ -546,7 +602,7 @@ def update_class_role(user_id: str, class_id: str, new_role: str, updated_by: st
     import datetime
 
     # Validate role
-    valid_roles = ['instructor', 'ta', 'grader', 'student']
+    valid_roles = ['instructor', 'ta', 'student']
     if new_role.lower() not in valid_roles:
         raise ValueError(f'Invalid role: {new_role}. Must be one of {valid_roles}')
 
@@ -611,10 +667,8 @@ def update_class_role(user_id: str, class_id: str, new_role: str, updated_by: st
     if not membership_found:
         raise ValueError(f'User {user_id} is not a member of class {class_id}')
 
-    # Update classRoles (backward compatibility)
-    if 'classRoles' not in user:
-        user['classRoles'] = {}
-    user['classRoles'][class_id] = new_role.lower()
+    # Note: Legacy formats (classRoles) are no longer written to.
+    # They are kept for read compatibility only.
 
     # Save user
     db.upsert('users', user)

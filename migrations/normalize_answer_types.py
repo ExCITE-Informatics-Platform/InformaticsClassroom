@@ -145,18 +145,20 @@ def normalize_correct_values(db, dry_run=False):
             print(f"  [DRY RUN] Would update {record_id}: {repr(old_value)} -> {repr(new_value)}")
         else:
             try:
-                # Update the record
-                update_query = """
-                    UPDATE answer
-                    SET data = jsonb_set(data, '{correct}', $1::jsonb)
-                    WHERE id = $2
-                """
-                # Note: We need to wrap the value in quotes for JSONB
-                db.query_raw('answer', update_query, [
-                    {'name': '$1', 'value': f'"{new_value}"'},
-                    {'name': '$2', 'value': record_id}
-                ])
-                updated_count += 1
+                # Get current answer data
+                answer = db.get('answer', record_id)
+                if answer:
+                    # Update the correct field in the data
+                    answer_data = answer.get('data', {}) if isinstance(answer.get('data'), dict) else answer
+                    answer_data['correct'] = new_value
+
+                    # Use the adapter's update method
+                    db.update('answer', record_id, answer_data)
+                    updated_count += 1
+                    print(f"  Updated {record_id}: {repr(old_value)} -> {repr(new_value)}")
+                else:
+                    print(f"  Warning: Answer {record_id} not found")
+                    error_count += 1
             except Exception as e:
                 print(f"  Error updating {record_id}: {e}")
                 error_count += 1
