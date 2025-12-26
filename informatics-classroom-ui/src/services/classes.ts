@@ -36,6 +36,24 @@ export interface MemberActionResponse {
   error?: string;
 }
 
+export interface ImportStudentsResult {
+  user_id: string;
+  status: 'added' | 'skipped' | 'error';
+  created: boolean;
+  error?: string;
+}
+
+export interface ImportStudentsResponse {
+  success: boolean;
+  class_id: string;
+  imported: number;
+  created: number;
+  skipped: number;
+  errors: Array<{ user_id: string; error: string }>;
+  results: ImportStudentsResult[];
+  error?: string;
+}
+
 export const classesService = {
   // Get all members of a class
   getClassMembers: (classId: string) =>
@@ -52,4 +70,8 @@ export const classesService = {
   // Remove a member from a class
   removeClassMember: (classId: string, userId: string) =>
     apiClient.delete<MemberActionResponse>(`/api/classes/${classId}/members/${userId}`),
+
+  // Bulk import students to a class
+  importStudents: (classId: string, userIds: string[]) =>
+    apiClient.post<ImportStudentsResponse>(`/api/classes/${classId}/import-students`, { user_ids: userIds }),
 };

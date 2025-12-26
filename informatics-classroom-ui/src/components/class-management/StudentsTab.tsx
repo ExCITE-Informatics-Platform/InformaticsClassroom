@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { classesService, type ClassMember, type ClassMembersResponse } from '../../services/classes';
+import { classesService, type ClassMember, type ClassMembersResponse, type ImportStudentsResponse } from '../../services/classes';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Alert, AlertDescription } from '../ui/alert';
@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../ui/select';
-import { Plus, Trash2, AlertCircle, Loader2, Users } from 'lucide-react';
+import { Plus, Trash2, AlertCircle, Loader2, Users, Upload, FileText, CheckCircle2 } from 'lucide-react';
 
 interface StudentsTabProps {
   classId: string;
@@ -35,6 +35,9 @@ export default function StudentsTab({ classId }: StudentsTabProps) {
   });
   const [editingMember, setEditingMember] = useState<string | null>(null);
   const [editRole, setEditRole] = useState<'instructor' | 'ta' | 'student'>('student');
+  const [showImportForm, setShowImportForm] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importResults, setImportResults] = useState<ImportStudentsResponse | null>(null);
 
   // Fetch class members
   const {
@@ -109,6 +112,26 @@ export default function StudentsTab({ classId }: StudentsTabProps) {
     },
   });
 
+  // Import students mutation
+  const importStudentsMutation = useMutation({
+    mutationFn: async (userIds: string[]) => {
+      if (!classId) throw new Error('No class selected');
+      const response = await classesService.importStudents(classId, userIds);
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to import students');
+      }
+      // Unwrap ApiResponse if needed
+      if ('data' in response && response.data) {
+        return response.data as ImportStudentsResponse;
+      }
+      return response as ImportStudentsResponse;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['class', 'members', classId] });
+      setImportResults(data);
+    },
+  });
+
   const handleAddMember = () => {
     if (!addMemberForm.email && !addMemberForm.user_id) {
       return;
@@ -130,6 +153,38 @@ export default function StudentsTab({ classId }: StudentsTabProps) {
     }
   };
 
+  const handleImportStudents = () => {
+    // Parse the text input - split by newlines, commas, or whitespace
+    const userIds = importText
+      .split(/[\n,\s]+/)
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0);
+
+    if (userIds.length === 0) {
+      return;
+    }
+
+    importStudentsMutation.mutate(userIds);
+  };
+
+  const handleCloseImport = () => {
+    setShowImportForm(false);
+    setImportText('');
+    setImportResults(null);
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      setImportText(text);
+    };
+    reader.readAsText(file);
+  };
+
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
       case 'instructor':
@@ -148,7 +203,7 @@ export default function StudentsTab({ classId }: StudentsTabProps) {
   return (
     <>
       {/* Error Display */}
-      {(membersError || addMemberMutation.error || updateMemberMutation.error || removeMemberMutation.error) && (
+      {(membersError || addMemberMutation.error || updateMemberMutation.error || removeMemberMutation.error || importStudentsMutation.error) && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
@@ -160,6 +215,8 @@ export default function StudentsTab({ classId }: StudentsTabProps) {
               ? updateMemberMutation.error.message
               : removeMemberMutation.error instanceof Error
               ? removeMemberMutation.error.message
+              : importStudentsMutation.error instanceof Error
+              ? importStudentsMutation.error.message
               : 'An error occurred'}
           </AlertDescription>
         </Alert>
@@ -231,6 +288,144 @@ export default function StudentsTab({ classId }: StudentsTabProps) {
         </Card>
       )}
 
+      {/* Import Students Form */}
+      {showImportForm && (
+        <Card className="shadow-lg">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Upload className="w-5 h-5" />
+              Import Students to {classId}
+            </CardTitle>
+            <CardDescription>
+              Bulk add students by importing their IDs from a CSV file or pasting them directly
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {!importResults ? (
+              <div className="space-y-4">
+                {/* Format Guidance */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h4 className="font-medium text-blue-900 flex items-center gap-2 mb-2">
+                    <FileText className="w-4 h-4" />
+                    CSV Format Guide
+                  </h4>
+                  <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
+                    <li>Enter one student ID per line, or separate IDs with commas</li>
+                    <li>Email domains will be automatically stripped (e.g., <code className="bg-blue-100 px-1 rounded">jsmith1@jhu.edu</code> → <code className="bg-blue-100 px-1 rounded">jsmith1</code>)</li>
+                    <li>IDs are case-insensitive and will be converted to lowercase</li>
+                    <li>Students not in the system will be created as pending users</li>
+                  </ul>
+                  <div className="mt-3 p-2 bg-white rounded border border-blue-200">
+                    <p className="text-xs text-blue-700 font-medium mb-1">Example:</p>
+                    <pre className="text-xs text-blue-800 font-mono">jsmith1
+mjohnson2
+alee3@jhu.edu
+bwilliams4</pre>
+                  </div>
+                </div>
+
+                {/* File Upload */}
+                <div>
+                  <Label htmlFor="csv-file">Upload CSV File</Label>
+                  <div className="mt-1">
+                    <Input
+                      id="csv-file"
+                      type="file"
+                      accept=".csv,.txt"
+                      onChange={handleFileUpload}
+                      className="cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {/* Text Input */}
+                <div>
+                  <Label htmlFor="student-ids">Or paste student IDs directly</Label>
+                  <textarea
+                    id="student-ids"
+                    className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 mt-1"
+                    placeholder="Enter student IDs (one per line or comma-separated)..."
+                    value={importText}
+                    onChange={(e) => setImportText(e.target.value)}
+                  />
+                  {importText && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {importText.split(/[\n,\s]+/).filter((id) => id.trim().length > 0).length} IDs detected
+                    </p>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-2">
+                  <Button
+                    onClick={handleImportStudents}
+                    disabled={importStudentsMutation.isPending || !importText.trim()}
+                  >
+                    {importStudentsMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Importing...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4 mr-2" />
+                        Import Students
+                      </>
+                    )}
+                  </Button>
+                  <Button variant="outline" onClick={handleCloseImport}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              /* Import Results */
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-green-700">
+                  <CheckCircle2 className="w-5 h-5" />
+                  <span className="font-medium">Import Complete</span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-green-700">{importResults.imported}</p>
+                    <p className="text-sm text-green-600">Imported</p>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-blue-700">{importResults.created}</p>
+                    <p className="text-sm text-blue-600">New Users Created</p>
+                  </div>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-gray-700">{importResults.skipped}</p>
+                    <p className="text-sm text-gray-600">Skipped</p>
+                  </div>
+                </div>
+
+                {importResults.errors.length > 0 && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <p className="font-medium text-red-800 mb-2">Errors ({importResults.errors.length})</p>
+                    <ul className="text-sm text-red-700 space-y-1">
+                      {importResults.errors.slice(0, 5).map((err, idx) => (
+                        <li key={idx}>
+                          <code className="bg-red-100 px-1 rounded">{err.user_id}</code>: {err.error}
+                        </li>
+                      ))}
+                      {importResults.errors.length > 5 && (
+                        <li className="text-red-600">...and {importResults.errors.length - 5} more errors</li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+                <Button onClick={handleCloseImport}>
+                  Done
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Members Table */}
       <Card className="shadow-lg">
         <CardHeader>
@@ -244,11 +439,17 @@ export default function StudentsTab({ classId }: StudentsTabProps) {
                 {loadingMembers ? 'Loading...' : `${members.length} member(s)`}
               </CardDescription>
             </div>
-            {!showAddForm && (
-              <Button onClick={() => setShowAddForm(true)}>
-                <Plus className="w-4 h-4 mr-2" />
-                Add Member
-              </Button>
+            {!showAddForm && !showImportForm && (
+              <div className="flex gap-2">
+                <Button onClick={() => setShowAddForm(true)}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Member
+                </Button>
+                <Button variant="outline" onClick={() => setShowImportForm(true)}>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Import Students
+                </Button>
+              </div>
             )}
           </div>
         </CardHeader>
@@ -264,10 +465,16 @@ export default function StudentsTab({ classId }: StudentsTabProps) {
               <p className="text-muted-foreground text-lg mb-4">
                 No members found in this class. Add your first member to get started!
               </p>
-              <Button onClick={() => setShowAddForm(true)}>
-                <Plus className="w-4 h-4 mr-2" />
-                Add Member
-              </Button>
+              <div className="flex gap-2 justify-center">
+                <Button onClick={() => setShowAddForm(true)}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Member
+                </Button>
+                <Button variant="outline" onClick={() => setShowImportForm(true)}>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Import Students
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="overflow-x-auto">
