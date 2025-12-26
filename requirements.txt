@@ -53,3 +53,4 @@ WTForms==3.2.1
 psycopg2-binary==2.9.9
 gunicorn==23.0.0
 flask-cors==5.0.1
+python-dotenv==1.1.0
