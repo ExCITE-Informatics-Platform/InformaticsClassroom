@@ -26,9 +26,19 @@ def login():
         }
         return redirect("/")
 
-    # Production: Normal Microsoft authentication flow
+    # Check for repeated auth failures to prevent infinite loops
+    retry_count = session.get("auth_retry_count", 0)
+    if retry_count >= 3:
+        # Too many failures - show error page instead of looping
+        session["auth_retry_count"] = 0  # Reset for next attempt
+        return render_template("login.html",
+                             auth_url="#",
+                             version=msal.__version__,
+                             error="Authentication failed after multiple attempts. Please try again.")
+
+    # Production: Auto-redirect to Microsoft (no intermediate login page)
     session["flow"] = _build_auth_code_flow(scopes=Config.SCOPE)
-    return render_template("login.html", auth_url=session["flow"]["auth_uri"], version=msal.__version__)
+    return redirect(session["flow"]["auth_uri"])
 
 @auth_bp.route(Config.REDIRECT_PATH)  # Its absolute URL must match your app's redirect_uri set in AAD
 def authorized():
@@ -37,11 +47,17 @@ def authorized():
         result = _build_msal_app(cache=cache).acquire_token_by_auth_code_flow(
             session.get("flow", {}), request.args)
         if "error" in result:
-            return render_template("auth_error.html", result=result)
+            # Increment retry count and redirect back to login (which auto-redirects to Microsoft)
+            session["auth_retry_count"] = session.get("auth_retry_count", 0) + 1
+            return redirect("/login")
+        # Success - reset retry count and save session
+        session["auth_retry_count"] = 0
         session["user"] = result.get("id_token_claims")
         _save_cache(cache)
     except ValueError:  # Usually caused by CSRF
-        pass  # Simply ignore them
+        # Increment retry count and redirect back to login
+        session["auth_retry_count"] = session.get("auth_retry_count", 0) + 1
+        return redirect("/login")
     # Redirect to React SPA root after successful authentication
     return redirect("/")
 

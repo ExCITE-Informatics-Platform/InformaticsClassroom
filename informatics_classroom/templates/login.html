@@ -49,45 +49,44 @@
             font-size: 0.85rem;
             color: #999;
         }
-        .status {
-            margin-top: 1rem;
+        .error-box {
+            margin-bottom: 1.5rem;
             padding: 1rem;
-            background: #f0f9ff;
-            border-left: 4px solid #667eea;
+            background: #fef2f2;
+            border-left: 4px solid #ef4444;
             text-align: left;
+            color: #991b1b;
         }
-        .status h3 {
+        .error-box h3 {
             margin: 0 0 0.5rem 0;
-            color: #667eea;
-        }
-        .status ul {
-            margin: 0;
-            padding-left: 1.5rem;
-        }
-        .status li {
-            color: #666;
-            margin-bottom: 0.25rem;
+            color: #dc2626;
         }
     </style>
 </head>
 <body>
     <div class="login-container">
         <h1>Informatics Classroom</h1>
-        <p>Sign in with your Microsoft account</p>
 
-        <a href="{{ auth_url }}" class="login-button">
-            Sign in with Microsoft
-        </a>
-
-        <div class="status">
-            <h3>✅ System Status</h3>
-            <ul>
-                <li>Backend API: Running</li>
-                <li>Database: PostgreSQL Connected</li>
-                <li>Authentication: Azure AD Ready</li>
-                <li>Documents: 82,295 migrated</li>
-            </ul>
+        {% if error %}
+        <div class="error-box">
+            <h3>⚠️ Authentication Error</h3>
+            <p>{{ error }}</p>
         </div>
+        <p>Click below to try signing in again</p>
+        <a href="/login" class="login-button">
+            Try Again
+        </a>
+        {% else %}
+        <p>Redirecting to Microsoft sign-in...</p>
+        <div style="margin: 2rem 0;">
+            <div style="display: inline-block; width: 40px; height: 40px; border: 3px solid #667eea; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+        </div>
+        <style>
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
+        </style>
+        {% endif %}
 
         <div class="version">
             MSAL Version: {{ version }}
