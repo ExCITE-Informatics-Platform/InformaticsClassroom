@@ -38,7 +38,7 @@ htmlcov/
 
 # Distribution / packaging
 build/
-dist/
+# Note: informatics-classroom-ui/dist is NOT ignored (needed for Azure deployment)
 *.egg-info/
 FINAL_TEST_EXECUTION.txt
 
