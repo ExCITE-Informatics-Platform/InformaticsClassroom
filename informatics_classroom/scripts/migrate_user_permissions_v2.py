@@ -167,21 +167,22 @@ def migrate_user(
             'reason': 'No classes to migrate'
         }
 
-    # Build class_memberships
-    class_memberships = {}
+    # Build class_memberships as list format (current standard)
+    class_memberships = []
     migration_time = datetime.datetime.utcnow().isoformat()
     role_assignments = []
 
     for class_id in user_classes:
         role = determine_role_for_class(user, class_id, user_modifications)
 
-        class_memberships[class_id] = {
+        class_memberships.append({
+            'class_id': class_id,
             'role': role,
             'assigned_at': migration_time,
             'assigned_by': 'migration_script_v2',
             'migrated_from': 'quiz_modification_analysis',
             'modified_quizzes': class_id in user_modifications.get(user_id, set())
-        }
+        })
 
         role_assignments.append(f"{class_id}:{role}")
 
@@ -221,13 +222,18 @@ def validate_migration(user: Dict[str, Any]) -> List[str]:
         issues.append(f"No class_memberships found")
         return issues
 
-    if not isinstance(class_memberships, dict):
-        issues.append(f"class_memberships is not a dict")
+    if not isinstance(class_memberships, list):
+        issues.append(f"class_memberships is not a list (found: {type(class_memberships).__name__})")
         return issues
 
-    for class_id, membership in class_memberships.items():
+    for membership in class_memberships:
         if not isinstance(membership, dict):
-            issues.append(f"Membership for {class_id} is not a dict")
+            issues.append(f"Membership entry is not a dict: {membership}")
+            continue
+
+        class_id = membership.get('class_id')
+        if not class_id:
+            issues.append(f"Membership missing class_id: {membership}")
             continue
 
         role = membership.get('role')

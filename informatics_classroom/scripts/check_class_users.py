@@ -29,22 +29,30 @@ def check_class_users(class_id: str):
         has_access = False
         access_type = None
 
-        # Check class_memberships (new format)
-        class_memberships = user.get('class_memberships', {})
-        if isinstance(class_memberships, dict) and class_id in class_memberships:
+        # Check class_memberships (list format - current standard)
+        class_memberships = user.get('class_memberships', [])
+        if isinstance(class_memberships, list):
+            for membership in class_memberships:
+                if isinstance(membership, dict) and membership.get('class_id') == class_id:
+                    has_access = True
+                    role = membership.get('role', 'student')
+                    access_type = f"class_memberships (role: {role})"
+                    break
+        # Also check dict format (legacy)
+        elif isinstance(class_memberships, dict) and class_id in class_memberships:
             has_access = True
             membership = class_memberships[class_id]
             role = membership.get('role') if isinstance(membership, dict) else membership
-            access_type = f"class_memberships (role: {role})"
+            access_type = f"class_memberships/dict (role: {role})"
 
         # Check classRoles (intermediate format)
-        elif class_id in user.get('classRoles', {}):
+        if not has_access and class_id in user.get('classRoles', {}):
             has_access = True
             role = user['classRoles'][class_id]
             access_type = f"classRoles (role: {role})"
 
         # Check accessible_classes (old format)
-        elif class_id in user.get('accessible_classes', []):
+        if not has_access and class_id in user.get('accessible_classes', []):
             has_access = True
             global_role = user.get('role', 'student')
             access_type = f"accessible_classes (global role: {global_role})"
