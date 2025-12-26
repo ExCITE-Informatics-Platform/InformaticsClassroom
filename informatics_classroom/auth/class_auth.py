@@ -557,19 +557,64 @@ def update_class_role(user_id: str, class_id: str, new_role: str, updated_by: st
     if not user:
         raise ValueError(f'User {user_id} not found')
 
-    # Check if user is in class
-    if 'class_memberships' not in user or class_id not in user['class_memberships']:
+    # Handle class_memberships - support both list and dict formats
+    class_memberships = user.get('class_memberships', [])
+    old_role = None
+    membership_found = False
+
+    # Handle list format: [{"class_id": "fhir23", "role": "student"}, ...]
+    if isinstance(class_memberships, list):
+        for membership in class_memberships:
+            if isinstance(membership, dict) and membership.get('class_id') == class_id:
+                old_role = membership.get('role')
+                membership['role'] = new_role.lower()
+                membership['updated_at'] = datetime.datetime.utcnow().isoformat()
+                membership['updated_by'] = updated_by
+                membership_found = True
+                break
+
+    # Handle dict format: {"fhir23": {"role": "student"}, ...}
+    elif isinstance(class_memberships, dict):
+        if class_id in class_memberships:
+            membership = class_memberships[class_id]
+            if isinstance(membership, dict):
+                old_role = membership.get('role')
+                membership['role'] = new_role.lower()
+                membership['updated_at'] = datetime.datetime.utcnow().isoformat()
+                membership['updated_by'] = updated_by
+            else:
+                # Simple string format
+                old_role = membership
+                class_memberships[class_id] = {
+                    'role': new_role.lower(),
+                    'updated_at': datetime.datetime.utcnow().isoformat(),
+                    'updated_by': updated_by
+                }
+            membership_found = True
+
+    # Also check classRoles as fallback
+    if not membership_found:
+        class_roles = user.get('classRoles', {})
+        if isinstance(class_roles, dict) and class_id in class_roles:
+            old_role = class_roles[class_id]
+            # User is in classRoles but not class_memberships - add to class_memberships
+            if not isinstance(class_memberships, list):
+                user['class_memberships'] = []
+            user['class_memberships'].append({
+                'class_id': class_id,
+                'role': new_role.lower(),
+                'updated_at': datetime.datetime.utcnow().isoformat(),
+                'updated_by': updated_by
+            })
+            membership_found = True
+
+    if not membership_found:
         raise ValueError(f'User {user_id} is not a member of class {class_id}')
 
-    # Update role
-    old_role = user['class_memberships'][class_id].get('role')
-    user['class_memberships'][class_id]['role'] = new_role.lower()
-    user['class_memberships'][class_id]['updated_at'] = datetime.datetime.utcnow().isoformat()
-    user['class_memberships'][class_id]['updated_by'] = updated_by
-
     # Update classRoles (backward compatibility)
-    if 'classRoles' in user:
-        user['classRoles'][class_id] = new_role.lower()
+    if 'classRoles' not in user:
+        user['classRoles'] = {}
+    user['classRoles'][class_id] = new_role.lower()
 
     # Save user
     db.upsert('users', user)
