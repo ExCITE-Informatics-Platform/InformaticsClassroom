@@ -37,24 +37,45 @@ def require_admin(f):
                 session["user"]["name"] = session["user"].get("name", "Robert Barrett (Dev Mode)")
                 session["user"]["email"] = session["user"].get("email", "rbarre16@jh.edu")
 
+        # Helper to check database roles (source of truth for admin status)
+        def check_db_admin(user_id: str) -> bool:
+            """Check if user has admin role in database"""
+            db = get_database_adapter()
+            db_user = db.get('users', user_id)
+            if db_user:
+                db_roles = db_user.get('roles', [])
+                return 'admin' in db_roles
+            return False
+
         # Check JWT token
         token = request.headers.get('Authorization', '').replace('Bearer ', '')
         if token:
             try:
                 payload = decode_token(token)
+                user_id = payload.get('user_id') or payload.get('sub', '').split('@')[0]
                 roles = payload.get('roles', [])
+
+                # Check JWT roles first, then fallback to database (handles token refresh issues)
                 if 'admin' not in roles:
-                    return jsonify({"error": "Admin access required"}), 403
+                    # JWT might be stale, check database as source of truth
+                    if not check_db_admin(user_id):
+                        return jsonify({"error": "Admin access required"}), 403
             except Exception as e:
                 return jsonify({"error": "Invalid token"}), 401
         # Check session (development mode)
         elif session.get('user'):
-            roles = session['user'].get('roles', [])
+            user_data = session['user']
+            user_id = user_data.get('id') or user_data.get('preferred_username', '').split('@')[0]
+            roles = user_data.get('roles', [])
+
             # Check if impersonating - use original user's roles
             if session.get('impersonation'):
                 roles = session['impersonation'].get('original_user_roles', [])
+
+            # Check session roles first, then fallback to database
             if 'admin' not in roles:
-                return jsonify({"error": "Admin access required"}), 403
+                if not check_db_admin(user_id):
+                    return jsonify({"error": "Admin access required"}), 403
         else:
             return jsonify({"error": "Not authenticated"}), 401
 
