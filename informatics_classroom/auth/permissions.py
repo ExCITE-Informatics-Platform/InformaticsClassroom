@@ -200,14 +200,30 @@ def require_permission(permission: str, class_id_param: Optional[str] = None):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             from flask import request
+            from informatics_classroom.database.factory import get_database_adapter
 
             # Get user from session
-            user = session.get('user')
-            if not user:
+            session_user = session.get('user')
+            if not session_user:
                 return jsonify({
                     'success': False,
                     'error': 'Not authenticated'
                 }), 401
+
+            # Get user_id from session
+            user_id = session_user.get('id') or session_user.get('preferred_username', '').split('@')[0]
+
+            # Fetch fresh user data from database (source of truth for roles)
+            db = get_database_adapter()
+            db_user = db.get('users', user_id)
+
+            # Merge session data with database roles
+            # Database roles take precedence over session roles
+            user = dict(session_user)
+            if db_user:
+                user['roles'] = db_user.get('roles', [])
+                user['classRoles'] = db_user.get('classRoles', {})
+                user['class_memberships'] = db_user.get('class_memberships', [])
 
             # Get class_id from request if specified
             class_id = None
