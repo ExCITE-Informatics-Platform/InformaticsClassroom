@@ -128,9 +128,19 @@ function hasAccess(
       if (inheritedRoles.includes(requiredRole)) return true;
     }
 
-    // Check class-specific roles if user has classRoles
+    // Check class-specific roles if user has classRoles (legacy format)
     if (user.classRoles && typeof user.classRoles === 'object') {
       for (const classRole of Object.values(user.classRoles)) {
+        if (classRole === requiredRole) return true;
+        const inheritedRoles: string[] = ROLE_HIERARCHY[classRole as string] || [];
+        if (inheritedRoles.includes(requiredRole)) return true;
+      }
+    }
+
+    // Check class-specific roles from class_memberships (new list format)
+    if (user.class_memberships && Array.isArray(user.class_memberships)) {
+      for (const membership of user.class_memberships) {
+        const classRole = membership.role;
         if (classRole === requiredRole) return true;
         const inheritedRoles: string[] = ROLE_HIERARCHY[classRole as string] || [];
         if (inheritedRoles.includes(requiredRole)) return true;
@@ -150,10 +160,20 @@ function hasAccess(
       }
     }
 
-    // Check class-specific roles for permissions
+    // Check class-specific roles for permissions (legacy format)
     if (user.classRoles && typeof user.classRoles === 'object') {
       for (const classRole of Object.values(user.classRoles)) {
         const rolePerms = ROLE_PERMISSIONS[classRole as string] || [];
+        if (rolePerms.includes('*') || rolePerms.includes(requiredPermission)) {
+          return true;
+        }
+      }
+    }
+
+    // Check class-specific roles for permissions (new list format)
+    if (user.class_memberships && Array.isArray(user.class_memberships)) {
+      for (const membership of user.class_memberships) {
+        const rolePerms = ROLE_PERMISSIONS[membership.role] || [];
         if (rolePerms.includes('*') || rolePerms.includes(requiredPermission)) {
           return true;
         }

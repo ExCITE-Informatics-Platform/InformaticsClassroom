@@ -426,7 +426,7 @@ def api_submit_answer():
 
 @classroom_bp.route('/api/instructor/classes', methods=['GET'])
 @require_jwt_token
-@require_role(['instructor', 'admin'])
+@require_role(['instructor', 'ta', 'admin'])
 def api_get_instructor_classes():
     """
     Get all classes the user can manage with detailed metadata.

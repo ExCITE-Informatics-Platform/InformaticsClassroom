@@ -297,7 +297,9 @@ export default function StudentsTab({ classId }: StudentsTabProps) {
                               }
                             >
                               <SelectTrigger className="w-32">
-                                <SelectValue />
+                                <SelectValue>
+                                  {editRole === 'instructor' ? 'Instructor' : editRole === 'ta' ? 'TA' : 'Student'}
+                                </SelectValue>
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="instructor">Instructor</SelectItem>

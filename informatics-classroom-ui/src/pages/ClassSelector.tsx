@@ -64,7 +64,18 @@ export default function ClassSelector() {
   const [newClassName, setNewClassName] = useState('');
   const [deleteConfirmClass, setDeleteConfirmClass] = useState<ClassMetadata | null>(null);
 
-  const isInstructor = user?.roles?.includes('instructor') || user?.roles?.includes('admin');
+  // Check if user can create new classes (only global admins and instructors)
+  const canCreateClasses = user?.roles?.includes('instructor') || user?.roles?.includes('admin');
+
+  // Check if user can manage any classes (admin, instructor, or TA in at least one class)
+  const canManageClasses = canCreateClasses ||
+    user?.roles?.includes('ta') ||
+    (user?.class_memberships && user.class_memberships.some(
+      (m: { role: string }) => m.role === 'ta' || m.role === 'instructor'
+    )) ||
+    (user?.classRoles && Object.values(user.classRoles).some(
+      (role: string) => role === 'ta' || role === 'instructor'
+    ));
 
   // Fetch classes with metadata
   const {
@@ -183,7 +194,7 @@ export default function ClassSelector() {
               Select a class to manage or create a new one
             </p>
           </div>
-          {isInstructor && (
+          {canCreateClasses && (
             <Button onClick={() => setShowCreateDialog(true)} size="lg">
               <Plus className="w-5 h-5 mr-2" />
               Create Class
@@ -222,11 +233,11 @@ export default function ClassSelector() {
             <BookOpen className="w-16 h-16 text-muted-foreground mb-4" />
             <h2 className="text-xl font-semibold mb-2">No Classes Found</h2>
             <p className="text-muted-foreground text-center mb-4">
-              {isInstructor
+              {canCreateClasses
                 ? 'Get started by creating your first class'
                 : 'You need to be assigned as an instructor or TA for at least one class'}
             </p>
-            {isInstructor && (
+            {canCreateClasses && (
               <Button onClick={() => setShowCreateDialog(true)}>
                 <Plus className="w-4 h-4 mr-2" />
                 Create Your First Class
