@@ -332,6 +332,9 @@ def refresh_access_token(refresh_token):
     """
     Generate new access token from refresh token.
 
+    SECURITY: Always fetches current roles from database to ensure
+    revoked permissions are not carried forward in new tokens.
+
     Args:
         refresh_token (str): Valid refresh token
 
@@ -341,6 +344,8 @@ def refresh_access_token(refresh_token):
     Raises:
         jwt.InvalidTokenError: If refresh token is invalid or expired
     """
+    from informatics_classroom.database.factory import get_database_adapter
+
     try:
         payload = decode_token(refresh_token)
 
@@ -350,11 +355,20 @@ def refresh_access_token(refresh_token):
 
         user_id = payload.get('user_id')
 
-        # In a real implementation, you'd fetch fresh user data from database
-        # For now, we'll create a minimal token with just the user_id
-        # The client will need to fetch full user data separately
+        # SECURITY FIX: Fetch fresh user data from database
+        # This ensures revoked roles are not carried forward in new tokens
+        db = get_database_adapter()
+        db_user = db.get('users', user_id)
+
+        if not db_user:
+            raise jwt.InvalidTokenError("User not found in database")
+
+        # Get current roles from database (source of truth)
+        current_roles = db_user.get('roles', ['student'])
+
         new_token_payload = {
             'user_id': user_id,
+            'roles': current_roles,  # Include current roles from database
             'exp': datetime.datetime.utcnow() + datetime.timedelta(
                 seconds=Config.JWT_ACCESS_TOKEN_EXPIRES
             ),

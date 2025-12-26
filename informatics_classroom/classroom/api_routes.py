@@ -286,8 +286,21 @@ def api_get_quiz_details():
 def api_submit_answer():
     """
     Submit a single answer to a quiz question.
+
     Body: { course, module, question_num, answer }
     Returns: { correct, feedback }
+
+    DESIGN NOTE - INTENTIONALLY OPEN API:
+    This endpoint does NOT validate class membership. This is by design to support:
+    1. External API integrations that submit answers programmatically
+    2. Auto-enrollment: Users are automatically enrolled as students when they
+       submit their first answer to a course
+    3. Flexible team names: The 'team' field can be any identifier
+
+    Security implications:
+    - Users can submit answers to any course if they know the course ID
+    - This is acceptable for the educational use case where open access is preferred
+    - Sensitive courses should use separate access controls at the course level
     """
     try:
         data = request.get_json()

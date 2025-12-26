@@ -249,34 +249,40 @@ def stop_impersonation():
     original_user_id = impersonation['original_user_id']
     original_user = db.get('users', original_user_id)
 
+    # SECURITY FIX: Always fetch current roles from database, not stored impersonation data
+    # This ensures that if the admin's role was revoked during impersonation,
+    # they don't retain their old permissions
     if original_user:
+        # Use CURRENT database roles, not stored impersonation roles
+        current_roles = original_user.get('roles', ['student'])
         session['user'] = {
             'preferred_username': original_user.get('email', original_user_id + '@jh.edu'),
             'name': original_user.get('name', impersonation['original_user_name']),
             'email': original_user.get('email', impersonation['original_user_email']),
-            'roles': impersonation['original_user_roles'],
+            'roles': current_roles,  # Use current DB roles, not stale stored roles
             'id': original_user_id
         }
     else:
-        # Fallback to stored impersonation data
-        session['user'] = {
-            'preferred_username': impersonation['original_user_email'],
-            'name': impersonation['original_user_name'],
-            'email': impersonation['original_user_email'],
-            'roles': impersonation['original_user_roles'],
-            'id': original_user_id
-        }
+        # User no longer exists in database - deny access
+        import logging
+        logging.warning(f"Impersonation stop failed: original user {original_user_id} not found in database")
+        del session['impersonation']
+        session.clear()
+        return jsonify({
+            'success': False,
+            'error': 'Original user no longer exists'
+        }), 401
 
     # Clear impersonation
     del session['impersonation']
 
-    # Generate new JWT token for original user
+    # Generate new JWT token for original user with CURRENT database roles
     user_data = session['user']
     jwt_user_data = {
         'id': user_data.get('id', original_user_id),
         'email': user_data.get('email'),
         'displayName': user_data.get('name'),
-        'roles': user_data.get('roles', ['admin']),
+        'roles': current_roles,  # Use DB roles directly, not from session with unsafe default
         'preferred_username': user_data.get('preferred_username')
     }
 

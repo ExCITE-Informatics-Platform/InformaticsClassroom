@@ -214,16 +214,25 @@ def require_permission(permission: str, class_id_param: Optional[str] = None):
             user_id = session_user.get('id') or session_user.get('preferred_username', '').split('@')[0]
 
             # Fetch fresh user data from database (source of truth for roles)
+            # SECURITY: Always verify roles from database, never trust session alone
             db = get_database_adapter()
             db_user = db.get('users', user_id)
 
-            # Merge session data with database roles
-            # Database roles take precedence over session roles
+            # SECURITY FIX: If user not found in database, deny access
+            # This prevents using stale session roles after user deletion or role revocation
+            if not db_user:
+                import logging
+                logging.warning(f"Permission check failed: user {user_id} not found in database")
+                return jsonify({
+                    'success': False,
+                    'error': 'User not found'
+                }), 401
+
+            # Use database roles as source of truth, merge with session for display info
             user = dict(session_user)
-            if db_user:
-                user['roles'] = db_user.get('roles', [])
-                user['classRoles'] = db_user.get('classRoles', {})
-                user['class_memberships'] = db_user.get('class_memberships', [])
+            user['roles'] = db_user.get('roles', [])
+            user['classRoles'] = db_user.get('classRoles', {})
+            user['class_memberships'] = db_user.get('class_memberships', [])
 
             # Get class_id from request if specified
             class_id = None
