@@ -67,6 +67,7 @@ def get_database_adapter(
             'port': int(kwargs.get('port') or os.getenv('POSTGRES_PORT', '5432')),
             'user': kwargs.get('user') or os.getenv('POSTGRES_USER'),
             'password': kwargs.get('password') or os.getenv('POSTGRES_PASSWORD'),
+            'sslmode': kwargs.get('sslmode') or os.getenv('POSTGRES_SSLMODE'),
         }
 
         # Validate required PostgreSQL credentials

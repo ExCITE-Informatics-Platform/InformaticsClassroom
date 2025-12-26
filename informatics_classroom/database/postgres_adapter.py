@@ -37,6 +37,7 @@ class PostgreSQLAdapter(DatabaseAdapter):
         port: int = 5432,
         user: str = None,
         password: str = None,
+        sslmode: str = None,
         **kwargs
     ):
         """
@@ -48,21 +49,29 @@ class PostgreSQLAdapter(DatabaseAdapter):
             port: Database port
             user: Database user
             password: Database password
+            sslmode: SSL mode ('require' for Azure, None for local)
         """
         self.database_name = database_name
         self.host = host
         self.port = port
         self.user = user
         self.password = password
+        self.sslmode = sslmode
 
-        self.conn = psycopg2.connect(
-            dbname=database_name,
-            host=host,
-            port=port,
-            user=user,
-            password=password,
-            cursor_factory=RealDictCursor
-        )
+        connect_kwargs = {
+            'dbname': database_name,
+            'host': host,
+            'port': port,
+            'user': user,
+            'password': password,
+            'cursor_factory': RealDictCursor
+        }
+
+        # Add SSL mode for Azure PostgreSQL
+        if sslmode:
+            connect_kwargs['sslmode'] = sslmode
+
+        self.conn = psycopg2.connect(**connect_kwargs)
         self.conn.autocommit = True
         self._in_transaction = False
 
