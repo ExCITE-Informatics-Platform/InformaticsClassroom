@@ -420,16 +420,37 @@ def assign_class_role(user_id: str, class_id: str, role: str, assigned_by: str =
     if not user:
         raise ValueError(f'User {user_id} not found')
 
-    # Initialize class_memberships if needed
+    # Initialize class_memberships as a list if needed
     if 'class_memberships' not in user:
-        user['class_memberships'] = {}
+        user['class_memberships'] = []
 
-    # Assign role
-    user['class_memberships'][class_id] = {
-        'role': role.lower(),
-        'assigned_at': datetime.datetime.utcnow().isoformat(),
-        'assigned_by': assigned_by
-    }
+    # Ensure class_memberships is a list (convert from dict if needed)
+    if isinstance(user['class_memberships'], dict):
+        # Convert old dict format to list format
+        user['class_memberships'] = [
+            {'class_id': cid, 'role': info.get('role', 'student') if isinstance(info, dict) else info}
+            for cid, info in user['class_memberships'].items()
+        ]
+
+    # Find existing membership or create new one
+    membership_found = False
+    for membership in user['class_memberships']:
+        if membership.get('class_id') == class_id:
+            # Update existing membership
+            membership['role'] = role.lower()
+            membership['assigned_at'] = datetime.datetime.utcnow().isoformat()
+            membership['assigned_by'] = assigned_by
+            membership_found = True
+            break
+
+    if not membership_found:
+        # Add new membership
+        user['class_memberships'].append({
+            'class_id': class_id,
+            'role': role.lower(),
+            'assigned_at': datetime.datetime.utcnow().isoformat(),
+            'assigned_by': assigned_by
+        })
 
     # Update classRoles for backward compatibility
     if 'classRoles' not in user:
@@ -473,16 +494,25 @@ def remove_class_role(user_id: str, class_id: str) -> Dict[str, Any]:
     if not user:
         raise ValueError(f'User {user_id} not found')
 
-    # Remove from class_memberships
-    if 'class_memberships' in user and class_id in user['class_memberships']:
-        del user['class_memberships'][class_id]
+    # Remove from class_memberships (list format)
+    if 'class_memberships' in user:
+        if isinstance(user['class_memberships'], list):
+            # List format: filter out the class
+            user['class_memberships'] = [
+                m for m in user['class_memberships']
+                if m.get('class_id') != class_id
+            ]
+        elif isinstance(user['class_memberships'], dict):
+            # Dict format (legacy): delete key
+            if class_id in user['class_memberships']:
+                del user['class_memberships'][class_id]
 
     # Remove from classRoles (backward compatibility)
-    if 'classRoles' in user and class_id in user['classRoles']:
+    if 'classRoles' in user and isinstance(user['classRoles'], dict) and class_id in user['classRoles']:
         del user['classRoles'][class_id]
 
     # Remove from accessible_classes (backward compatibility)
-    if 'accessible_classes' in user and class_id in user['accessible_classes']:
+    if 'accessible_classes' in user and isinstance(user['accessible_classes'], list) and class_id in user['accessible_classes']:
         user['accessible_classes'].remove(class_id)
 
     # Save user

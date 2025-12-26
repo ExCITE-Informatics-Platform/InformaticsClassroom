@@ -517,6 +517,143 @@ def api_list_users():
             "error": str(e)
         }), 500
 
+
+@auth_bp.route("/api/users/<user_id>", methods=["GET"])
+def api_get_user(user_id):
+    """API endpoint to get a single user by ID"""
+    from flask import jsonify
+    from informatics_classroom.database.factory import get_database_adapter
+
+    if not session.get("user"):
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+
+    try:
+        db = get_database_adapter()
+        user = db.get('users', user_id)
+
+        if not user:
+            return jsonify({"success": False, "error": f"User {user_id} not found"}), 404
+
+        # Format user for frontend
+        formatted_user = {
+            "id": user.get('id', ''),
+            "username": user.get('id', ''),
+            "email": user.get('email', f"{user.get('id', '')}@jh.edu"),
+            "displayName": user.get('displayName', user.get('name', user.get('id', ''))),
+            "roles": user.get('roles', ['student']),
+            "isActive": user.get('isActive', True),
+            "classRoles": user.get('classRoles', {}),
+            "class_memberships": user.get('class_memberships', []),
+            "permissions": user.get('permissions', []),
+            "createdAt": user.get('createdAt', user.get('created_at', '')),
+            "lastLogin": user.get('lastLogin', '')
+        }
+
+        return jsonify({"success": True, "data": formatted_user}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@auth_bp.route("/api/users/<user_id>", methods=["PUT"])
+def api_update_user(user_id):
+    """API endpoint to update a user's roles, permissions, and other fields"""
+    from flask import jsonify, request
+    from informatics_classroom.database.factory import get_database_adapter
+
+    if not session.get("user"):
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+
+    # Check if current user is admin (required to update other users)
+    current_user_id = session["user"].get("id") or session["user"].get("preferred_username", "").split("@")[0]
+    db = get_database_adapter()
+    current_db_user = db.get('users', current_user_id)
+    current_roles = current_db_user.get('roles', []) if current_db_user else []
+
+    if 'admin' not in current_roles:
+        return jsonify({"success": False, "error": "Admin access required to update users"}), 403
+
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+
+        user = db.get('users', user_id)
+        if not user:
+            return jsonify({"success": False, "error": f"User {user_id} not found"}), 404
+
+        # Update allowed fields
+        if 'displayName' in data:
+            user['displayName'] = data['displayName']
+            user['name'] = data['displayName']  # Keep both in sync
+        if 'email' in data:
+            user['email'] = data['email']
+        if 'role' in data:
+            # Single role update - convert to roles array
+            user['roles'] = [data['role']]
+        if 'roles' in data:
+            user['roles'] = data['roles'] if isinstance(data['roles'], list) else [data['roles']]
+        if 'isActive' in data:
+            user['isActive'] = data['isActive']
+        if 'permissions' in data:
+            user['permissions'] = data['permissions']
+
+        # Save updated user
+        db.upsert('users', user)
+
+        # Format response
+        formatted_user = {
+            "id": user.get('id', ''),
+            "username": user.get('id', ''),
+            "email": user.get('email', f"{user.get('id', '')}@jh.edu"),
+            "displayName": user.get('displayName', user.get('name', user.get('id', ''))),
+            "roles": user.get('roles', ['student']),
+            "isActive": user.get('isActive', True),
+            "classRoles": user.get('classRoles', {}),
+            "class_memberships": user.get('class_memberships', []),
+            "permissions": user.get('permissions', []),
+            "createdAt": user.get('createdAt', user.get('created_at', '')),
+            "lastLogin": user.get('lastLogin', '')
+        }
+
+        return jsonify({"success": True, "data": formatted_user}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@auth_bp.route("/api/users/<user_id>", methods=["DELETE"])
+def api_delete_user(user_id):
+    """API endpoint to delete a user"""
+    from flask import jsonify
+    from informatics_classroom.database.factory import get_database_adapter
+
+    if not session.get("user"):
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+
+    # Check if current user is admin
+    current_user_id = session["user"].get("id") or session["user"].get("preferred_username", "").split("@")[0]
+    db = get_database_adapter()
+    current_db_user = db.get('users', current_user_id)
+    current_roles = current_db_user.get('roles', []) if current_db_user else []
+
+    if 'admin' not in current_roles:
+        return jsonify({"success": False, "error": "Admin access required to delete users"}), 403
+
+    # Prevent self-deletion
+    if user_id == current_user_id:
+        return jsonify({"success": False, "error": "Cannot delete your own account"}), 400
+
+    try:
+        user = db.get('users', user_id)
+        if not user:
+            return jsonify({"success": False, "error": f"User {user_id} not found"}), 404
+
+        db.delete('users', user_id)
+
+        return jsonify({"success": True, "message": f"User {user_id} deleted"}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @auth_bp.route("/api/permissions/matrix", methods=["GET"])
 def api_permissions_matrix():
     """API endpoint for permissions matrix"""
