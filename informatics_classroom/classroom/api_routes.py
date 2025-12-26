@@ -20,6 +20,7 @@ from informatics_classroom.classroom.routes import (
     get_classes_for_user,
     get_quizzes_for_user,
     get_user_answers_for_quiz,
+    get_user_answers_for_course,
     get_current_user,
     get_modules_for_class,
     has_class_access,
@@ -140,6 +141,10 @@ def api_get_student_dashboard():
     """
     Get complete student dashboard data.
     Returns: User info, accessible courses, and overall progress summary
+
+    Optimized: Uses batch queries instead of N+1 pattern.
+    - 1 query for all quizzes
+    - 1 query per course for all answers (grouped by module)
     """
     try:
         user_id = request.jwt_user.get('user_id') or request.jwt_user.get('email', '').split('@')[0]
@@ -152,31 +157,57 @@ def api_get_student_dashboard():
             }), 404
 
         user = user_data[0]
+        team = user.get('team', user_id)
         courses = get_classes_for_user(user_id)
 
-        # Get overall progress summary
+        if not courses:
+            return jsonify({
+                'success': True,
+                'user': {
+                    'id': user_id,
+                    'email': request.jwt_user.get('email'),
+                    'display_name': request.jwt_user.get('display_name'),
+                    'team': team
+                },
+                'courses': [],
+                'course_summaries': []
+            }), 200
+
+        # BATCH QUERY 1: Get ALL quizzes for user's courses in one query
+        db = get_database_adapter()
+        all_quizzes = db.query('quiz', filters={})
+        courses_set = set(courses)
+        user_quizzes_by_course = {}
+        for quiz in all_quizzes:
+            quiz_class = quiz.get('class')
+            if quiz_class in courses_set:
+                if quiz_class not in user_quizzes_by_course:
+                    user_quizzes_by_course[quiz_class] = []
+                user_quizzes_by_course[quiz_class].append(quiz)
+
+        # Build progress summary for each course
         course_summaries = []
         for course in courses:
-            db = get_database_adapter()
-            quizzes = db.query('quiz', filters={'class': course})
-
+            quizzes = user_quizzes_by_course.get(course, [])
             total_questions = sum(len(q.get('questions', [])) for q in quizzes)
 
-            # Get all answers for this course
-            team = user.get('team', user_id)
+            # BATCH QUERY 2: Get ALL answers for this course in ONE query (grouped by module)
+            answers_by_module = get_user_answers_for_course(course, team)
+
             total_answered = 0
             total_correct = 0
 
             for quiz in quizzes:
-                module = quiz.get('module')
-                answers = get_user_answers_for_quiz(course, module, team)
+                module = str(quiz.get('module'))
+                # O(1) lookup instead of DB query
+                answers = answers_by_module.get(module, [])
 
                 # Count unique questions answered
                 answered_questions = set(a.get('question') for a in answers)
                 total_answered += len(answered_questions)
 
-                # Count unique questions answered correctly (not all correct attempts)
-                correct_questions = set(a.get('question') for a in answers if a.get('correct', False))
+                # Count unique questions answered correctly
+                correct_questions = set(a.get('question') for a in answers if a.get('correct'))
                 total_correct += len(correct_questions)
 
             course_summaries.append({
@@ -194,7 +225,7 @@ def api_get_student_dashboard():
                 'id': user_id,
                 'email': request.jwt_user.get('email'),
                 'display_name': request.jwt_user.get('display_name'),
-                'team': user.get('team', user_id)
+                'team': team
             },
             'courses': courses,
             'course_summaries': course_summaries
@@ -330,6 +361,7 @@ def api_submit_answer():
             print(f"DEBUG - User {user_id} not found, creating on answer submission", file=sys.stderr)
             sys.stderr.flush()
 
+            # Create user with all three class membership formats in sync
             db_user = {
                 'id': user_id,
                 'email': request.jwt_user.get('email', f"{user_id}@jhu.edu"),
@@ -338,8 +370,8 @@ def api_submit_answer():
                 'class_memberships': [
                     {'class_id': course, 'role': 'student'}  # Auto-enroll in this course
                 ],
-                'classRoles': {},
-                'accessible_classes': [],
+                'classRoles': {course: 'student'},  # Sync with class_memberships
+                'accessible_classes': [course],  # Sync with class_memberships
                 'created_at': dt.datetime.utcnow().isoformat(),
                 'team': user_id
             }
@@ -349,24 +381,43 @@ def api_submit_answer():
         else:
             # User exists - check if they need auto-enrollment in this course
             class_memberships = db_user.get('class_memberships', [])
+            if not isinstance(class_memberships, list):
+                class_memberships = []
 
             # Check if already enrolled in this course
             already_enrolled = any(
-                m.get('class_id') == course
+                isinstance(m, dict) and m.get('class_id') == course
                 for m in class_memberships
             )
 
             if not already_enrolled:
-                # Auto-enroll as student
+                # Auto-enroll as student - update all three formats
                 import sys
                 print(f"DEBUG - Auto-enrolling {user_id} in {course} as student", file=sys.stderr)
                 sys.stderr.flush()
 
+                # Update class_memberships list
                 class_memberships.append({
                     'class_id': course,
                     'role': 'student'
                 })
                 db_user['class_memberships'] = class_memberships
+
+                # Update classRoles dict
+                class_roles = db_user.get('classRoles', {})
+                if not isinstance(class_roles, dict):
+                    class_roles = {}
+                class_roles[course] = 'student'
+                db_user['classRoles'] = class_roles
+
+                # Update accessible_classes list
+                accessible_classes = db_user.get('accessible_classes', [])
+                if not isinstance(accessible_classes, list):
+                    accessible_classes = []
+                if course not in accessible_classes:
+                    accessible_classes.append(course)
+                db_user['accessible_classes'] = accessible_classes
+
                 db.upsert('users', db_user)
 
         # Get updated user data for team field

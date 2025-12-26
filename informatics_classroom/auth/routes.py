@@ -742,8 +742,9 @@ def api_bulk_grant_permissions():
         if not user:
             continue
 
-        # If class_id is specified, update classRoles
+        # If class_id is specified, update both classRoles and class_memberships
         if class_id:
+            # Update legacy classRoles dict
             class_roles = user.get('classRoles', {})
             if not isinstance(class_roles, dict):
                 class_roles = {}
@@ -754,6 +755,33 @@ def api_bulk_grant_permissions():
                 class_roles[class_id] = 'instructor'
 
             user['classRoles'] = class_roles
+
+            # Also update new class_memberships list format
+            class_memberships = user.get('class_memberships', [])
+            if not isinstance(class_memberships, list):
+                class_memberships = []
+
+            # Check if class already exists in memberships
+            existing_idx = None
+            for idx, membership in enumerate(class_memberships):
+                if isinstance(membership, dict) and membership.get('class_id') == class_id:
+                    existing_idx = idx
+                    break
+
+            if permissions:
+                import datetime
+                new_membership = {
+                    'class_id': class_id,
+                    'role': 'instructor',
+                    'assigned_at': datetime.datetime.utcnow().isoformat(),
+                    'assigned_by': session['user'].get('id', 'admin')
+                }
+                if existing_idx is not None:
+                    class_memberships[existing_idx] = new_membership
+                else:
+                    class_memberships.append(new_membership)
+
+            user['class_memberships'] = class_memberships
         else:
             # Update global roles
             current_roles = user.get('roles', [])
@@ -817,13 +845,24 @@ def api_bulk_revoke_permissions():
         if not user:
             continue
 
-        # If class_id is specified, update classRoles
+        # If class_id is specified, update both classRoles and class_memberships
         if class_id:
+            # Update legacy classRoles dict
             class_roles = user.get('classRoles', {})
             if isinstance(class_roles, dict) and class_id in class_roles:
                 # Remove the class role
                 del class_roles[class_id]
                 user['classRoles'] = class_roles
+
+            # Also update new class_memberships list format
+            class_memberships = user.get('class_memberships', [])
+            if isinstance(class_memberships, list):
+                # Remove the class membership
+                class_memberships = [
+                    m for m in class_memberships
+                    if not (isinstance(m, dict) and m.get('class_id') == class_id)
+                ]
+                user['class_memberships'] = class_memberships
         else:
             # Update global roles - revert to student
             user['roles'] = ['student']

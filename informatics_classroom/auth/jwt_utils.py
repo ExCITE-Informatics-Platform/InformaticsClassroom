@@ -179,25 +179,46 @@ def require_jwt_token(f):
             db_user = db.get('users', user_id)
 
             # Build class_memberships from database with backward compatibility
-            class_memberships = {}
+            # class_memberships: list format [{class_id, role, ...}] - NEW standard
+            # class_roles: dict format {class_id: role} - for backward compatibility
+            class_memberships_list = []
             class_roles = {}
             accessible_classes = []
 
             if db_user:
-                # Try new class_memberships structure first
-                class_memberships = db_user.get('class_memberships', {})
+                # Try new class_memberships structure first (list format)
+                class_memberships_raw = db_user.get('class_memberships', [])
+
+                if isinstance(class_memberships_raw, list) and class_memberships_raw:
+                    # New list format - use directly and build classRoles from it
+                    class_memberships_list = class_memberships_raw
+                    for membership in class_memberships_raw:
+                        if isinstance(membership, dict) and 'class_id' in membership:
+                            class_roles[membership['class_id']] = membership.get('role', 'student')
+
+                elif isinstance(class_memberships_raw, dict) and class_memberships_raw:
+                    # Old dict format - convert to list and extract roles
+                    for class_id, value in class_memberships_raw.items():
+                        if isinstance(value, dict):
+                            role = value.get('role', 'student')
+                        else:
+                            role = value if value else 'student'
+                        class_memberships_list.append({'class_id': class_id, 'role': role})
+                        class_roles[class_id] = role
 
                 # Fallback to classRoles (intermediate format)
-                if not class_memberships:
+                if not class_memberships_list:
                     class_roles = db_user.get('classRoles', {})
-                    if class_roles:
-                        # Convert classRoles to class_memberships format
+                    if class_roles and isinstance(class_roles, dict):
+                        # Convert classRoles to class_memberships list format
                         for class_id, role in class_roles.items():
-                            class_memberships[class_id] = {'role': role}
+                            if isinstance(role, dict):
+                                role = role.get('role', 'student')
+                            class_memberships_list.append({'class_id': class_id, 'role': role})
 
                 # Fallback to accessible_classes (old format)
                 accessible_classes = db_user.get('accessible_classes', [])
-                if not class_memberships and accessible_classes:
+                if not class_memberships_list and accessible_classes:
                     db_role = db_user.get('role', '').lower()
                     if db_role in ['admin', 'instructor']:
                         inferred_role = 'instructor'
@@ -209,7 +230,7 @@ def require_jwt_token(f):
                         inferred_role = 'student'
 
                     for class_id in accessible_classes:
-                        class_memberships[class_id] = {'role': inferred_role}
+                        class_memberships_list.append({'class_id': class_id, 'role': inferred_role})
                         class_roles[class_id] = inferred_role
 
             # Convert session user to JWT-compatible format
@@ -221,8 +242,8 @@ def require_jwt_token(f):
                 'email': user_data.get('email', user_data.get('preferred_username', '')),
                 'display_name': user_data.get('name', ''),
                 'roles': user_roles,  # Use database roles (admin) not session roles
-                'class_memberships': class_memberships,  # New: structured class memberships
-                'classRoles': class_roles,  # Legacy: simple class->role mapping
+                'class_memberships': class_memberships_list,  # New: list format [{class_id, role}]
+                'classRoles': class_roles,  # Legacy: dict format {class_id: role}
                 'accessible_classes': accessible_classes,  # Legacy: for backward compatibility
                 'role': db_user.get('role', 'student') if db_user else 'student',  # Legacy global role
                 'type': 'session'  # Mark as session-based for tracking

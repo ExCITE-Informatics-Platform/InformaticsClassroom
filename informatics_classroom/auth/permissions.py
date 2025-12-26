@@ -114,8 +114,23 @@ def has_permission(user: Dict, permission: str, class_id: Optional[str] = None) 
     if legacy_role == 'admin':
         return True
 
-    # 2. If class-scoped, check classRoles
+    # 2. If class-scoped, check class_memberships (new list format) and classRoles (legacy dict)
     if class_id:
+        # Check new class_memberships list format first
+        class_memberships = user.get('class_memberships', [])
+        if isinstance(class_memberships, list):
+            for membership in class_memberships:
+                if isinstance(membership, dict) and membership.get('class_id') == class_id:
+                    class_role = membership.get('role', '').lower()
+                    if class_role:
+                        # Treat 'user' as 'student'
+                        if class_role == 'user':
+                            class_role = 'student'
+                        role_permissions = get_role_permissions_with_inheritance(class_role)
+                        if '*' in role_permissions or permission in role_permissions:
+                            return True
+
+        # Check legacy classRoles dict format
         class_roles = user.get('classRoles', {})
         if isinstance(class_roles, dict):
             class_role = class_roles.get(class_id, '').lower()
@@ -128,7 +143,7 @@ def has_permission(user: Dict, permission: str, class_id: Optional[str] = None) 
                     return True
 
         # Backward compatibility: if no classRole but user has access to class, default to student
-        if not class_roles:
+        if not class_memberships and not class_roles:
             access = user.get('access', [])
             if class_id in access:
                 role_permissions = get_role_permissions_with_inheritance('student')
@@ -167,15 +182,27 @@ def get_user_classes(user: Dict) -> List[str]:
     if not user:
         return []
 
-    # Combine classes from classRoles and access array
+    # Combine classes from all formats
     classes = set()
 
-    # From classRoles
+    # From class_memberships (new list format) - check first
+    class_memberships = user.get('class_memberships', [])
+    if isinstance(class_memberships, list):
+        for membership in class_memberships:
+            if isinstance(membership, dict) and 'class_id' in membership:
+                classes.add(membership['class_id'])
+
+    # From classRoles (legacy dict format)
     class_roles = user.get('classRoles', {})
     if isinstance(class_roles, dict):
         classes.update(class_roles.keys())
 
-    # From access array (backward compatibility)
+    # From accessible_classes (legacy list format)
+    accessible_classes = user.get('accessible_classes', [])
+    if isinstance(accessible_classes, list):
+        classes.update(accessible_classes)
+
+    # From access array (very old backward compatibility)
     access = user.get('access', [])
     if isinstance(access, list):
         classes.update(access)
