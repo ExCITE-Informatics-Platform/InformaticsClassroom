@@ -138,10 +138,16 @@ class PostgreSQLAdapter(DatabaseAdapter):
         else:
             select_clause = "id, data"
 
-        # Build ORDER BY clause
+        # Build ORDER BY clause (whitelist to prevent SQL injection)
         order_clause = ""
+        ALLOWED_ORDER_COLUMNS = ['id', 'module', 'datetime', 'class', 'team', 'course', 'question', 'owner', 'created_at', 'updated_at']
         if order_by:
-            order_clause = f"ORDER BY data->>'{order_by}'"
+            if order_by in ALLOWED_ORDER_COLUMNS:
+                order_clause = f"ORDER BY data->>'{order_by}'"
+            else:
+                # Log attempted injection and ignore invalid column
+                import logging
+                logging.warning(f"Invalid ORDER BY column attempted: {order_by}")
 
         # Build LIMIT/OFFSET
         limit_clause = f"LIMIT {limit}" if limit else ""

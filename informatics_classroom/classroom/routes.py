@@ -213,89 +213,9 @@ def set_object(object, table):
     db = get_database_adapter()
     db.upsert(table, object)
 
-# --- HTML-SERVING ROUTES ---
-@classroom_bp.route("/generate-token", methods=["GET"])
-def generate_token_page():
-    """Render the token generation page."""
-    # Make sure the user is logged in
-    if not ich.check_user_session(session):
-        return redirect(url_for("auth_bp.login"))
-
-    # SECURITY: Only admins and instructors can generate tokens
-    if not (is_admin() or is_instructor()):
-        flash("You do not have permission to access this page.", "error")
-        return redirect(url_for("classroom_bp.landingpage"))
-
-    users = get_current_user()
-    if not users:
-        return redirect(url_for("auth_bp.login"))
-
-    accessible_classes = get_classes_for_user()
-
-    class_modules = {}
-    for class_val in accessible_classes:
-        modules = get_modules_for_class(class_val)
-        class_modules[class_val] = modules
-
-    return render_template(
-        "token_generation.html",
-        title="Generate Token",
-        user=session.get("user"),
-        classes=accessible_classes,
-        class_modules=json.dumps(class_modules)  # Pass as JSON
-    )
-
-
-
 def has_class_access(user_id, class_val):
     accessible_classess = get_classes_for_user(user_id)
     return class_val in accessible_classess
-
-@classroom_bp.route("/create-quiz", methods=["GET"])
-def create_quiz_page():
-    """Render the create quiz page."""
-    if not ich.check_user_session(session):
-        return redirect(url_for("auth_bp.login"))
-    return render_template("create_quiz.html", title="Create Quiz")
-
-@classroom_bp.route("/modify-quiz", methods=["GET"])
-def modify_quiz_page():
-    """Render the modify quiz page."""
-    if not ich.check_user_session(session):
-        return redirect(url_for("auth_bp.login"))
-
-    if not (is_instructor() or is_admin()):
-        return redirect(url_for("classroom_bp.landingpage"))
-    
-    return render_template("modify_quiz.html", title="Modify Quiz")
-
-@classroom_bp.route("/submit-answers", methods=["GET"])
-def submit_answers_page():
-    """Render the submit answers page."""
-    if not ich.check_user_session(session):
-        return redirect(url_for("auth_bp.login"))
-    return render_template("submit_answers.html", title="Submit Answers")
-
-@classroom_bp.route("/manage-users", methods=["GET"])
-def manage_users_page():
-    """Render the manage users page."""
-    if not ich.check_user_session(session):
-        return redirect(url_for("auth_bp.login"))
-
-    # SECURITY: Only admins can manage users
-    if not is_admin():
-        flash("You do not have permission to access this page.", "error")
-        return redirect(url_for("classroom_bp.landingpage"))
-
-    return render_template("manage_users.html", title="Manage Users")
-
-@classroom_bp.route("/exercise-review", methods=["GET"])
-def exercise_review_page():
-    """Render the Exercise Review page."""
-    if not ich.check_user_session(session):
-        return redirect(url_for("auth_bp.login"))  # Redirect to login if not authorized
-    # Render the HTML with the accessible classes
-    return render_template("exercise_review.html", classes=get_classes_for_user(), title="Exercise Review")
 
 
 # --- API ROUTES ---
@@ -809,17 +729,6 @@ def can_modify_quiz(quiz_id, user_id=None):
         return True
     return owns_quiz(quiz_id, user_id)
 
-@classroom_bp.route('/home')
-def landingpage():
-    if not ich.check_user_session(session):
-        return redirect(url_for("auth_bp.login"))
-    
-    return render_template('home.html',title='Home')
-
-@classroom_bp.route("/quiz",methods=['GET','POST'])
-def quiz():
-    return render_template('quiz.html')
-
 @classroom_bp.route("/api/get-session-quizzes", methods=["GET"])
 def get_session_quizzes():
     """Retrieve quizzes available to the user via session or JWT token."""
@@ -1055,26 +964,6 @@ def submit_answers():
         "message": f"Submission complete. Score: {correct_count}/{total_questions}",
         "feedback": feedback,
     }), result["status"]
-
-@classroom_bp.route("/assignment", methods=["GET"])
-def assignment():
-    """Render the assignment analysis page with class selection."""
-    if not ich.check_user_session(session):
-        return redirect(url_for("auth_bp.login"))
-
-    # SECURITY: Only admins, instructors, and TAs can access assignment analysis
-    # Check both global roles and class-specific instructor/TA roles
-    if not has_instructor_or_ta_access():
-        flash("You do not have permission to access this page.", "error")
-        return redirect(url_for("classroom_bp.landingpage"))
-
-    accessible_classes = get_classes_for_user()
-
-    # Validate accessible_classes is a list
-    if not isinstance(accessible_classes, list):
-        accessible_classes = []
-
-    return render_template("assignment.html", classes=accessible_classes, title="Assignment Analysis")
 
 @classroom_bp.route("/api/get-modules", methods=["GET"])
 def get_modules(include_owned = 0):
