@@ -982,12 +982,13 @@ def api_get_class_grades(class_id):
         quiz_metadata.sort(key=lambda q: (q['module'] or 0))
 
         # Get all answers for quizzes in this class
+        # Note: module kept as text to handle legacy data with text modules (e.g., 'ohdsi24_2')
         query = """
             SELECT
                 data->>'team' as team,
                 data->>'question' as question,
                 (data->>'correct')::boolean as correct,
-                (data->>'module')::int as module,
+                data->>'module' as module,
                 LOWER(data->>'course') as course
             FROM answer
             WHERE LOWER(data->>'course') = LOWER($1)
@@ -1029,7 +1030,8 @@ def api_get_class_grades(class_id):
                 active_questions = {str(q['question_num']) for q in quiz_questions}
 
                 # Filter student answers for this quiz (by module)
-                quiz_answers = student_df[student_df['module'] == quiz_module]
+                # Compare as strings to handle both integer and text module values
+                quiz_answers = student_df[student_df['module'].astype(str) == str(quiz_module)]
                 quiz_answers = quiz_answers[quiz_answers['question'].isin(active_questions)]
 
                 if quiz_answers.empty:
@@ -1207,6 +1209,7 @@ def api_analyze_assignment():
         active_questions = {str(q['question_num']) for q in quiz[0].get('questions', [])}
 
         # Query answers from database
+        # Note: module compared as text to handle legacy data with text modules (e.g., 'ohdsi24_2')
         db = get_database_adapter()
         query = """
             SELECT
@@ -1214,17 +1217,17 @@ def api_analyze_assignment():
                 data->>'question' as question,
                 data->>'answer' as answer,
                 (data->>'correct')::boolean as correct,
-                (data->>'module')::int as module,
+                data->>'module' as module,
                 data->>'datetime' as datetime
             FROM answer
             WHERE LOWER(data->>'course') = LOWER($1)
-              AND (data->>'module')::int = $2
+              AND data->>'module' = $2
               AND data->>'datetime' IS NOT NULL
             ORDER BY data->>'datetime' DESC
         """
         params = [
             {'name': '$1', 'value': class_name},
-            {'name': '$2', 'value': int(module_number)}
+            {'name': '$2', 'value': str(module_number)}
         ]
         items = db.query_raw('answer', query, params)
 

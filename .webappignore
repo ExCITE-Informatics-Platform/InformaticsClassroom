@@ -1,0 +1,56 @@
+# Azure App Service deployment exclusions
+# Syntax follows .gitignore format
+
+# Cosmos DB backups and migrations
+cosmos_backup_*/
+migrations/
+
+# Development files
+.env
+.env.*
+*.pyc
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+.coverage
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+
+# Git
+.git/
+.gitignore
+.webappignore
+
+# macOS
+.DS_Store
+
+# Session data (regenerated at runtime)
+flask_session/
+
+# Claude/Serena development tools
+.serena/
+.claude/
+claudedocs/
+
+# Test files
+tests/
+*.test.py
+FINAL_TEST_EXECUTION.txt
+
+# Documentation (not needed in production)
+*.md
+docs/
+
+# Scripts (admin/migration utilities)
+scripts/
+
+# Frontend dev (dist is needed, but not source/node_modules)
+informatics-classroom-ui/node_modules/
+informatics-classroom-ui/src/
+informatics-classroom-ui/*.json
+informatics-classroom-ui/*.config.*
+informatics-classroom-ui/*.html

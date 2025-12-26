@@ -50,3 +50,6 @@ claudedocs/
 .serena/
 migrations/cosmos_export
 migrations/cosmos_export/*
+# Cosmos DB backups
+cosmos_backup_*/
+scripts/backup_cosmos_full.py
