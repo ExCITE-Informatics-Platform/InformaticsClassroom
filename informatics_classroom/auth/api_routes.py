@@ -106,8 +106,16 @@ def api_callback():
             print(f"DEBUG - Created user {user_id} in database", file=sys.stderr)
             sys.stderr.flush()
 
-        # Generate JWT tokens
-        access_token = generate_access_token(user_data)
+        # Merge Azure AD data with database roles
+        # Database roles take precedence (admin set in DB, not Azure AD)
+        user_roles = db_user.get('roles', []) if db_user else user_data.get("roles", ['student'])
+
+        # Create merged user data for token generation
+        merged_user_data = dict(user_data)
+        merged_user_data['roles'] = user_roles
+
+        # Generate JWT tokens with database roles
+        access_token = generate_access_token(merged_user_data)
         refresh_token = generate_refresh_token(user_data.get("oid") or user_data.get("sub"))
 
         # Return tokens and user info to React
@@ -120,7 +128,7 @@ def api_callback():
                 "id": user_data.get("oid") or user_data.get("sub"),
                 "email": user_data.get("email") or user_data.get("preferred_username"),
                 "displayName": user_data.get("name"),
-                "roles": user_data.get("roles", [])
+                "roles": user_roles  # Use database roles, not Azure AD roles
             }
         }), 200
 
