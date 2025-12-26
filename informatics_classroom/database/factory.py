@@ -55,7 +55,13 @@ def get_database_adapter(
     """
 
     database_type = database_type or os.getenv('DATABASE_TYPE', 'postgresql')
-    database_name = database_name or Config.DATABASE
+
+    # Use appropriate database name based on database type
+    if database_name is None:
+        if database_type == 'postgresql':
+            database_name = os.getenv('POSTGRES_DB', Config.DATABASE)
+        else:
+            database_name = Config.DATABASE
 
     if database_type == 'cosmos':
         return CosmosDBAdapter(database_name=database_name, **kwargs)

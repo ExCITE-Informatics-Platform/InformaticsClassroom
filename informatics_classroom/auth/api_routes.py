@@ -206,32 +206,32 @@ def api_get_session():
     print(f"Config.DEBUG = {Config.DEBUG}", file=sys.stderr)
     sys.stderr.flush()
 
-    # Development mode: Auto-login if no session exists or fix incomplete session
+    # Development mode logging (NO auto-login - security risk!)
     if Config.DEBUG:
         import sys
         print(f"DEBUG - /api/auth/session - session.get('user'): {session.get('user')}", file=sys.stderr)
 
-        if not session.get("user"):
-            # Create new session
-            print(f"DEBUG - /api/auth/session creating new session", file=sys.stderr)
-            session["user"] = {
-                "preferred_username": "rbarre16@jh.edu",
-                "name": "Robert Barrett (Dev Mode)",
-                "email": "rbarre16@jh.edu",
-                "roles": ["admin"]
-            }
-        else:
+        # SECURITY FIX: Do NOT auto-create sessions or escalate privileges
+        # Users must authenticate via SSO even in debug mode
+        # If session exists but has empty roles, look up from database (don't auto-grant admin)
+        if session.get("user"):
             roles = session["user"].get("roles")
             print(f"DEBUG - /api/auth/session - existing session, roles: {roles}, type: {type(roles)}", file=sys.stderr)
 
             if not roles or (isinstance(roles, list) and len(roles) == 0):
-                # Fix incomplete session (missing or empty roles)
-                print(f"DEBUG - /api/auth/session FIXING incomplete session, adding admin role", file=sys.stderr)
-                session["user"]["roles"] = ["admin"]
-                session["user"]["name"] = session["user"].get("name", "Robert Barrett (Dev Mode)")
-                session["user"]["email"] = session["user"].get("email", "rbarre16@jh.edu")
-                session.modified = True  # Force session to be saved
-                print(f"DEBUG - /api/auth/session - session after fix: {session['user']}", file=sys.stderr)
+                # Look up actual roles from database instead of auto-granting admin
+                user_id = session["user"].get("id") or session["user"].get("preferred_username", "").split('@')[0]
+                db = get_database_adapter()
+                db_user = db.get('users', user_id)
+                if db_user:
+                    session["user"]["roles"] = db_user.get('roles', ['student'])
+                    session.modified = True
+                    print(f"DEBUG - /api/auth/session - loaded roles from DB: {session['user']['roles']}", file=sys.stderr)
+                else:
+                    # User not in database - default to student, NOT admin
+                    session["user"]["roles"] = ['student']
+                    session.modified = True
+                    print(f"DEBUG - /api/auth/session - user not in DB, defaulting to student role", file=sys.stderr)
 
     # Try JWT token first, then fall back to session cookie
     token = request.headers.get('Authorization', '').replace('Bearer ', '')

@@ -20,22 +20,23 @@ def require_admin(f):
     def decorated_function(*args, **kwargs):
         from informatics_classroom.config import Config
 
-        # Development mode: Auto-login as admin if no session exists or session is incomplete
+        # SECURITY FIX: Do NOT auto-create sessions or escalate privileges
+        # Even in debug mode, admin endpoints require proper authentication
         if Config.DEBUG:
             if not session.get("user"):
-                # Create new session
-                session["user"] = {
-                    "preferred_username": "rbarre16@jh.edu",
-                    "name": "Robert Barrett (Dev Mode)",
-                    "email": "rbarre16@jh.edu",
-                    "roles": ["admin"]
-                }
+                # No session - require authentication
+                print(f"DEBUG - require_admin: No session, authentication required", file=sys.stderr)
+                return jsonify({"error": "Authentication required. Please log in via SSO."}), 401
             elif not session["user"].get("roles"):
-                # Fix incomplete session (missing roles)
-                print(f"DEBUG - Fixing incomplete session, adding admin role", file=sys.stderr)
-                session["user"]["roles"] = ["admin"]
-                session["user"]["name"] = session["user"].get("name", "Robert Barrett (Dev Mode)")
-                session["user"]["email"] = session["user"].get("email", "rbarre16@jh.edu")
+                # Incomplete session - look up roles from database
+                user_id = session["user"].get("id") or session["user"].get("preferred_username", "").split('@')[0]
+                print(f"DEBUG - require_admin: Looking up roles for user {user_id}", file=sys.stderr)
+                db = get_database_adapter()
+                db_user = db.get('users', user_id)
+                if db_user:
+                    session["user"]["roles"] = db_user.get('roles', ['student'])
+                else:
+                    session["user"]["roles"] = ['student']
 
         # Helper to check database roles (source of truth for admin status)
         def check_db_admin(user_id: str) -> bool:

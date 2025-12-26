@@ -16,15 +16,9 @@ def auth_configure_app(app):
 
 @auth_bp.route("/login")
 def login():
-    # Development mode: Auto-login as test user when DEBUG=True
-    if Config.DEBUG:
-        session["user"] = {
-            "preferred_username": "rbarre16@jh.edu",
-            "name": "Robert Barrett (Dev Mode)",
-            "email": "rbarre16@jh.edu",
-            "roles": ["admin"]  # Grant admin role in dev mode
-        }
-        return redirect("/")
+    # SECURITY FIX: Do NOT auto-login as a specific user in DEBUG mode
+    # Even in development, users should authenticate via SSO for proper testing
+    # DEBUG mode only bypasses some strict security checks, not identity
 
     # Check for repeated auth failures to prevent infinite loops
     retry_count = session.get("auth_retry_count", 0)
@@ -67,33 +61,27 @@ def api_session():
     from flask import jsonify
     from informatics_classroom.auth.jwt_utils import generate_access_token, generate_refresh_token
 
-    # Development mode: Auto-login if no session exists OR fix incomplete session
+    # SECURITY FIX: Do NOT auto-login or auto-escalate privileges
     import sys
     print(f"DEBUG - Config.DEBUG = {Config.DEBUG}", file=sys.stderr)
     print(f"DEBUG - session.get('user') = {session.get('user')}", file=sys.stderr)
     sys.stderr.flush()
 
-    if Config.DEBUG:
-        if not session.get("user"):
-            # Create new session with admin role for development
-            print("DEBUG - Creating new admin session", file=sys.stderr)
+    # If session exists with empty roles, look up from database (don't auto-grant admin)
+    if Config.DEBUG and session.get("user"):
+        roles = session["user"].get("roles")
+        if not roles or (isinstance(roles, list) and len(roles) == 0):
+            from informatics_classroom.database.factory import get_database_adapter
+            user_id = session["user"].get("id") or session["user"].get("preferred_username", "").split('@')[0]
+            db = get_database_adapter()
+            db_user = db.get('users', user_id)
+            if db_user:
+                session["user"]["roles"] = db_user.get('roles', ['student'])
+            else:
+                session["user"]["roles"] = ['student']
+            session.modified = True
+            print(f"DEBUG - Loaded roles from DB: {session['user']['roles']}", file=sys.stderr)
             sys.stderr.flush()
-            session["user"] = {
-                "preferred_username": "rbarre16@jh.edu",
-                "name": "Robert Barrett (Dev Mode)",
-                "email": "rbarre16@jh.edu",
-                "roles": ["admin"]
-            }
-        else:
-            # Fix incomplete session with empty or missing roles
-            roles = session["user"].get("roles")
-            if not roles or (isinstance(roles, list) and len(roles) == 0):
-                print("DEBUG - Fixing incomplete session", file=sys.stderr)
-                sys.stderr.flush()
-                session["user"]["roles"] = ["admin"]
-                session["user"]["name"] = session["user"].get("name", "Robert Barrett (Dev Mode)")
-                session["user"]["email"] = session["user"].get("email", "rbarre16@jh.edu")
-                session.modified = True  # Force session save
 
     if not session.get("user"):
         return jsonify({
@@ -236,14 +224,8 @@ def api_current_user():
     """API endpoint for React frontend to get current user with full details"""
     from flask import jsonify
 
-    # Development mode: Auto-login if no session exists
-    if Config.DEBUG and not session.get("user"):
-        session["user"] = {
-            "preferred_username": "rbarre16@jh.edu",
-            "name": "Robert Barrett (Dev Mode)",
-            "email": "rbarre16@jh.edu",
-            "roles": ["admin"]
-        }
+    # SECURITY FIX: Do NOT auto-login as a specific user
+    # Users must authenticate via SSO even in debug mode
 
     if not session.get("user"):
         return jsonify({
@@ -339,14 +321,7 @@ def api_dashboard_stats():
     from flask import jsonify
     from informatics_classroom.database.factory import get_database_adapter
 
-    # Development mode: Auto-login if no session exists
-    if Config.DEBUG and not session.get("user"):
-        session["user"] = {
-            "preferred_username": "rbarre16@jh.edu",
-            "name": "Robert Barrett (Dev Mode)",
-            "email": "rbarre16@jh.edu",
-            "roles": ["admin"]
-        }
+    # SECURITY FIX: Do NOT auto-login as a specific user
 
     if not session.get("user"):
         return jsonify({
@@ -384,14 +359,7 @@ def api_list_users():
     from flask import jsonify, request
     from informatics_classroom.database.factory import get_database_adapter
 
-    # Development mode: Auto-login if no session exists
-    if Config.DEBUG and not session.get("user"):
-        session["user"] = {
-            "preferred_username": "rbarre16@jh.edu",
-            "name": "Robert Barrett (Dev Mode)",
-            "email": "rbarre16@jh.edu",
-            "roles": ["admin"]
-        }
+    # SECURITY FIX: Do NOT auto-login as a specific user
 
     if not session.get("user"):
         return jsonify({
@@ -660,14 +628,7 @@ def api_permissions_matrix():
     from flask import jsonify, request
     from informatics_classroom.database.factory import get_database_adapter
 
-    # Development mode: Auto-login if no session exists
-    if Config.DEBUG and not session.get("user"):
-        session["user"] = {
-            "preferred_username": "rbarre16@jh.edu",
-            "name": "Robert Barrett (Dev Mode)",
-            "email": "rbarre16@jh.edu",
-            "roles": ["admin"]
-        }
+    # SECURITY FIX: Do NOT auto-login as a specific user
 
     if not session.get("user"):
         return jsonify({
@@ -746,14 +707,7 @@ def api_bulk_grant_permissions():
     from flask import jsonify, request
     from informatics_classroom.database.factory import get_database_adapter
 
-    # Development mode: Auto-login if no session exists
-    if Config.DEBUG and not session.get("user"):
-        session["user"] = {
-            "preferred_username": "rbarre16@jh.edu",
-            "name": "Robert Barrett (Dev Mode)",
-            "email": "rbarre16@jh.edu",
-            "roles": ["admin"]
-        }
+    # SECURITY FIX: Do NOT auto-login as a specific user
 
     if not session.get("user"):
         return jsonify({
@@ -828,14 +782,7 @@ def api_bulk_revoke_permissions():
     from flask import jsonify, request
     from informatics_classroom.database.factory import get_database_adapter
 
-    # Development mode: Auto-login if no session exists
-    if Config.DEBUG and not session.get("user"):
-        session["user"] = {
-            "preferred_username": "rbarre16@jh.edu",
-            "name": "Robert Barrett (Dev Mode)",
-            "email": "rbarre16@jh.edu",
-            "roles": ["admin"]
-        }
+    # SECURITY FIX: Do NOT auto-login as a specific user
 
     if not session.get("user"):
         return jsonify({

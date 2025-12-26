@@ -1128,7 +1128,7 @@ def analyze_assignment():
             data->>'team' as team,
             data->>'question' as question,
             data->>'answer' as answer,
-            data->>'correct' as correct,
+            (data->>'correct')::integer as correct,
             data->>'module' as module,
             data->>'datetime' as datetime
         FROM answer
@@ -1335,9 +1335,9 @@ def exercise_review():
 
         # Fetch answers for the corresponding quiz
         answer_query = """
-            SELECT data->>'question' as question, (data->>'correct')::int as correct
+            SELECT data->>'question' as question, (data->>'correct')::integer as correct
             FROM answer
-            WHERE data->>'partition_key' = $1 AND data->>'team' = $2
+            WHERE data->>'PartitionKey' = $1 AND data->>'team' = $2
         """
         # Use 'id' field if present (for impersonation), otherwise extract from preferred_username
         user_id = session['user'].get('id') or session['user'].get('preferred_username', '').split('@')[0]

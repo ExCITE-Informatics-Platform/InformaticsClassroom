@@ -4,7 +4,8 @@ from flask import request, redirect, url_for
 
 def check_user_session(session):
     if Config.TESTING:
-        session['user'] = {'preferred_username' : 'rbarre16@jh.edu'}
+        # Use a generic test user, not a real person's identity
+        session['user'] = {'preferred_username' : 'test_user@jh.edu'}
         session['user_name'] = session['user'].get('preferred_username')
         return True
     else:
