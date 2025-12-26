@@ -83,7 +83,7 @@ def get_user_answers_for_quiz(class_val, module_val, team):
         SELECT
             data->>'question' as question,
             data->>'answer' as answer,
-            (data->>'correct')::integer as correct
+            CASE WHEN data->>'correct' IN ('1', 'true') THEN 1 ELSE 0 END as correct
         FROM answer
         WHERE data->>'course' = $1
           AND data->>'module' = $2
@@ -1128,7 +1128,7 @@ def analyze_assignment():
             data->>'team' as team,
             data->>'question' as question,
             data->>'answer' as answer,
-            (data->>'correct')::integer as correct,
+            CASE WHEN data->>'correct' IN ('1', 'true') THEN 1 ELSE 0 END as correct,
             data->>'module' as module,
             data->>'datetime' as datetime
         FROM answer
@@ -1335,7 +1335,7 @@ def exercise_review():
 
         # Fetch answers for the corresponding quiz
         answer_query = """
-            SELECT data->>'question' as question, (data->>'correct')::integer as correct
+            SELECT data->>'question' as question, CASE WHEN data->>'correct' IN ('1', 'true') THEN 1 ELSE 0 END as correct
             FROM answer
             WHERE data->>'PartitionKey' = $1 AND data->>'team' = $2
         """
